@@ -53,6 +53,15 @@ class MikroTikService
     public function syncCustomer(Customer $customer): array
     {
         $customer->loadMissing(['router', 'package']);
+
+        // A PPP secret can only reference a profile that already exists on the
+        // selected router. Ensure the package profile is present before the
+        // customer is created or updated so first-time syncs cannot fail with
+        // RouterOS' "input does not match any value of profile" response.
+        if ($customer->package) {
+            $this->syncPackage($customer->router, $customer->package);
+        }
+
         $secrets = $this->client($customer->router)->get('/ppp/secret')->throw()->json();
         $existing = collect($secrets)->firstWhere('name', $customer->username);
         $disabled = $customer->status !== 'active' || ($customer->expires_at && $customer->expires_at->isPast());
