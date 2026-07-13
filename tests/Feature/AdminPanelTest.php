@@ -8,8 +8,11 @@ use App\Models\Router;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
 
 class AdminPanelTest extends TestCase
@@ -94,6 +97,69 @@ class AdminPanelTest extends TestCase
         $this->assertDatabaseHas('routers', ['name' => 'Main Router']);
         $this->assertSame('router-secret', Router::first()->password);
         $this->assertDatabaseHas('packages', ['mikrotik_profile' => 'home-20m']);
+    }
+
+    public function test_admin_can_import_customers_from_excel_for_one_router(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Import Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Import Package', 'mikrotik_profile' => 'import-profile',
+            'rate_limit' => '20M/20M', 'price' => 699,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+
+        $spreadsheet = new Spreadsheet;
+        $spreadsheet->getActiveSheet()->fromArray([
+            ['full name', 'mobile', 'address', 'pppoe username', 'pppoe password', 'status', 'expiry date'],
+            ['Excel Customer One', '9876543210', 'Address One', 'excel001', 'pass-one', 'active', '2026-12-31'],
+            ['Excel Customer Two', '9876543211', 'Address Two', 'excel002', 'pass-two', 'disabled', '31/12/2026'],
+        ]);
+        $path = tempnam(sys_get_temp_dir(), 'customer-import-');
+        (new Xlsx($spreadsheet))->save($path);
+        $spreadsheet->disconnectWorksheets();
+
+        $file = new UploadedFile(
+            $path,
+            'customers.xlsx',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            null,
+            true,
+        );
+
+        $this->actingAs($user)->post(route('customers.import.store'), [
+            'router_id' => $router->id,
+            'package_id' => $package->id,
+            'file' => $file,
+            'duplicate_action' => 'skip',
+        ])->assertRedirect(route('customers.import.create'))
+            ->assertSessionHas('success', 'Excel import complete — 2 created, 0 updated, 0 skipped.');
+
+        $this->assertDatabaseHas('customers', [
+            'router_id' => $router->id,
+            'package_id' => $package->id,
+            'username' => 'excel001',
+            'status' => 'active',
+            'expires_at' => '2026-12-31 00:00:00',
+        ]);
+        $this->assertDatabaseHas('customers', [
+            'username' => 'excel002',
+            'status' => 'suspended',
+        ]);
+        $this->assertSame('pass-one', Customer::where('username', 'excel001')->firstOrFail()->password);
+    }
+
+    public function test_admin_can_download_the_excel_import_template(): void
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user)->get(route('customers.import.template'))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 
     public function test_api_requires_bearer_token(): void
