@@ -6,7 +6,9 @@ use App\Models\Customer;
 use App\Models\Package;
 use App\Models\Router;
 use Illuminate\Http\Client\PendingRequest;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
+use RuntimeException;
 
 class MikroTikService
 {
@@ -25,7 +27,10 @@ class MikroTikService
 
     public function test(Router $router): array
     {
-        $resource = $this->client($router)->get('/system/resource')->throw()->json();
+        $resource = $this->request(
+            'Router connection test',
+            fn () => $this->client($router)->get('/system/resource'),
+        );
         $router->forceFill(['last_connected_at' => now()])->save();
 
         return is_array($resource) && array_is_list($resource) ? ($resource[0] ?? []) : $resource;
@@ -33,7 +38,13 @@ class MikroTikService
 
     public function syncPackage(Router $router, Package $package): array
     {
-        $profiles = $this->client($router)->get('/ppp/profile')->throw()->json();
+        $profiles = $this->request(
+            'PPP profile lookup',
+            fn () => $this->client($router)->get('/ppp/profile', [
+                'name' => $package->mikrotik_profile,
+                '.proplist' => '.id,name',
+            ]),
+        );
         $existing = collect($profiles)->firstWhere('name', $package->mikrotik_profile);
         $payload = array_filter([
             'name' => $package->mikrotik_profile,
@@ -42,12 +53,17 @@ class MikroTikService
         ], fn ($value) => $value !== null && $value !== '');
 
         if ($existing && isset($existing['.id'])) {
-            return $this->client($router)
-                ->patch('/ppp/profile/'.rawurlencode($existing['.id']), $payload)
-                ->throw()->json() ?? [];
+            return $this->request(
+                'PPP profile update',
+                fn () => $this->client($router)
+                    ->patch('/ppp/profile/'.rawurlencode($existing['.id']), $payload),
+            );
         }
 
-        return $this->client($router)->put('/ppp/profile', $payload)->throw()->json() ?? [];
+        return $this->request(
+            'PPP profile creation',
+            fn () => $this->client($router)->put('/ppp/profile', $payload),
+        );
     }
 
     public function syncCustomer(Customer $customer): array
@@ -62,7 +78,16 @@ class MikroTikService
             $this->syncPackage($customer->router, $customer->package);
         }
 
-        $secrets = $this->client($customer->router)->get('/ppp/secret')->throw()->json();
+        // Fetch only the two non-sensitive fields needed for matching. Asking
+        // RouterOS to serialize every PPP secret (including password fields)
+        // is unnecessary and can cause an internal REST error on some builds.
+        $secrets = $this->request(
+            'PPP secret lookup',
+            fn () => $this->client($customer->router)->get('/ppp/secret', [
+                'name' => $customer->username,
+                '.proplist' => '.id,name',
+            ]),
+        );
         $existing = collect($secrets)->firstWhere('name', $customer->username);
         $disabled = $customer->status !== 'active' || ($customer->expires_at && $customer->expires_at->isPast());
         $payload = [
@@ -75,17 +100,37 @@ class MikroTikService
         ];
 
         if ($existing && isset($existing['.id'])) {
-            $result = $this->client($customer->router)
-                ->patch('/ppp/secret/'.rawurlencode($existing['.id']), $payload)
-                ->throw()->json() ?? [];
+            $result = $this->request(
+                'PPP secret update',
+                fn () => $this->client($customer->router)
+                    ->patch('/ppp/secret/'.rawurlencode($existing['.id']), $payload),
+            );
             $mikrotikId = $existing['.id'];
         } else {
-            $result = $this->client($customer->router)->put('/ppp/secret', $payload)->throw()->json() ?? [];
+            $result = $this->request(
+                'PPP secret creation',
+                fn () => $this->client($customer->router)->put('/ppp/secret', $payload),
+            );
             $mikrotikId = $result['.id'] ?? null;
         }
 
         $customer->forceFill(['mikrotik_id' => $mikrotikId, 'last_synced_at' => now()])->save();
 
         return $result;
+    }
+
+    private function request(string $operation, callable $send): array
+    {
+        try {
+            $json = $send()->throw()->json();
+
+            return is_array($json) ? $json : [];
+        } catch (RequestException $e) {
+            $response = $e->response;
+            $detail = $response?->json('detail') ?: $response?->json('message') ?: 'RouterOS request failed';
+            $status = $response?->status() ?? 0;
+
+            throw new RuntimeException("{$operation} failed (RouterOS HTTP {$status}): {$detail}", previous: $e);
+        }
     }
 }

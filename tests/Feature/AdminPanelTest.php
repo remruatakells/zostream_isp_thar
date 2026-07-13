@@ -84,13 +84,13 @@ class AdminPanelTest extends TestCase
         ]);
 
         Http::fake(function (Request $request) {
-            if ($request->method() === 'GET' && str_ends_with($request->url(), '/rest/ppp/profile')) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
                 return Http::response([]);
             }
             if ($request->method() === 'PUT' && str_ends_with($request->url(), '/rest/ppp/profile')) {
                 return Http::response(['.id' => '*1']);
             }
-            if ($request->method() === 'GET' && str_ends_with($request->url(), '/rest/ppp/secret')) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
                 return Http::response([]);
             }
             if ($request->method() === 'PUT' && str_ends_with($request->url(), '/rest/ppp/secret')) {
@@ -114,9 +114,11 @@ class AdminPanelTest extends TestCase
 
         $requests = Http::recorded();
         $this->assertCount(4, $requests);
+        $this->assertSame('.id,name', $requests[0][0]->data()['.proplist']);
         $this->assertStringEndsWith('/rest/ppp/profile', $requests[1][0]->url());
         $this->assertSame('PUT', $requests[1][0]->method());
         $this->assertSame('family-30m', $requests[1][0]['name']);
+        $this->assertSame('.id,name', $requests[2][0]->data()['.proplist']);
         $this->assertStringEndsWith('/rest/ppp/secret', $requests[3][0]->url());
         $this->assertSame('family-30m', $requests[3][0]['profile']);
 
