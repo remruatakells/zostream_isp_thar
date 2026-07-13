@@ -8,6 +8,7 @@ use App\Models\Router;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
@@ -29,6 +30,49 @@ class AdminPanelTest extends TestCase
             ->assertRedirect('/dashboard');
 
         $this->get('/dashboard')->assertOk()->assertSee('Your ISP, at a glance');
+    }
+
+    public function test_dashboard_shows_live_offline_and_expired_customer_details(): void
+    {
+        Cache::flush();
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Main POP', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Starter', 'mikrotik_profile' => 'starter',
+            'rate_limit' => '10M/10M', 'price' => 499,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        foreach ([
+            ['name' => 'Online Person', 'username' => 'online001', 'expires_at' => today()->addMonth()],
+            ['name' => 'Offline Person', 'username' => 'offline001', 'expires_at' => today()->addMonth()],
+            ['name' => 'Expired Person', 'username' => 'expired001', 'expires_at' => today()->subDay()],
+        ] as $data) {
+            Customer::create($data + [
+                'router_id' => $router->id,
+                'package_id' => $package->id,
+                'password' => 'customer-secret',
+                'status' => 'active',
+            ]);
+        }
+
+        Http::fake([
+            '*/rest/ppp/active*' => Http::response([
+                ['name' => 'online001', 'address' => '10.20.0.2', 'uptime' => '5m'],
+            ]),
+        ]);
+
+        $this->actingAs($user)->get('/dashboard')
+            ->assertOk()
+            ->assertSee('Online customers')
+            ->assertSee('Offline Person')
+            ->assertSee('Expired Person')
+            ->assertSee('Main POP');
+
+        Http::assertSentCount(1);
     }
 
     public function test_admin_can_create_router_and_package(): void

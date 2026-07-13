@@ -36,6 +36,19 @@ class MikroTikService
         return is_array($resource) && array_is_list($resource) ? ($resource[0] ?? []) : $resource;
     }
 
+    public function activePppUsers(Router $router): array
+    {
+        $sessions = $this->request(
+            'PPP active sessions',
+            fn () => $this->client($router)->get('/ppp/active', [
+                '.proplist' => '.id,name,address,uptime,bytes,service',
+            ]),
+        );
+        $router->forceFill(['last_connected_at' => now()])->save();
+
+        return array_is_list($sessions) ? $sessions : [];
+    }
+
     public function syncPackage(Router $router, Package $package): array
     {
         $profiles = $this->request(
@@ -92,7 +105,7 @@ class MikroTikService
             ]),
         );
         $existing = collect($secrets)->firstWhere('name', $customer->username);
-        $disabled = $customer->status !== 'active' || ($customer->expires_at && $customer->expires_at->isPast());
+        $disabled = $customer->status !== 'active' || ($customer->expires_at && $customer->expires_at->lt(today()));
         $payload = [
             'name' => $customer->username,
             'password' => $customer->password,
