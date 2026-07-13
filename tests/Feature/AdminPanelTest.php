@@ -162,6 +162,63 @@ class AdminPanelTest extends TestCase
             ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 
+    public function test_admin_can_pull_existing_ppp_secrets_from_one_mikrotik(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Existing Users Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $matchedPackage = Package::create([
+            'name' => 'Family', 'mikrotik_profile' => 'family-30m',
+            'rate_limit' => '30M/30M', 'price' => 899,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $fallbackPackage = Package::create([
+            'name' => 'Fallback', 'mikrotik_profile' => 'fallback',
+            'rate_limit' => '10M/10M', 'price' => 499,
+            'validity_days' => 15, 'is_active' => true,
+        ]);
+
+        Http::fake([
+            '*/rest/ppp/secret*' => Http::response([
+                ['.id' => '*1', 'name' => 'olduser1', 'password' => 'old-pass-1', 'profile' => 'family-30m', 'disabled' => 'false'],
+                ['.id' => '*2', 'name' => 'olduser2', 'password' => 'old-pass-2', 'profile' => 'unknown-profile', 'disabled' => 'true'],
+                ['.id' => '*3', 'name' => 'hidden-pass', 'profile' => 'family-30m', 'disabled' => 'false'],
+            ]),
+        ]);
+
+        $this->actingAs($user)->post(route('customers.import-mikrotik.store'), [
+            'router_id' => $router->id,
+            'fallback_package_id' => $fallbackPackage->id,
+            'duplicate_action' => 'skip',
+            'default_expires_at' => '2027-01-31',
+        ])->assertRedirect(route('customers.import-mikrotik.create'))
+            ->assertSessionHas('warning', 'MikroTik import complete — 2 created, 0 updated, 1 skipped from Existing Users Router.');
+
+        $this->assertDatabaseHas('customers', [
+            'router_id' => $router->id,
+            'package_id' => $matchedPackage->id,
+            'username' => 'olduser1',
+            'status' => 'active',
+            'mikrotik_id' => '*1',
+            'expires_at' => '2027-01-31 00:00:00',
+        ]);
+        $this->assertDatabaseHas('customers', [
+            'package_id' => $fallbackPackage->id,
+            'username' => 'olduser2',
+            'status' => 'suspended',
+        ]);
+        $this->assertDatabaseMissing('customers', ['username' => 'hidden-pass']);
+        $this->assertSame('old-pass-1', Customer::where('username', 'olduser1')->firstOrFail()->password);
+
+        Http::assertSent(fn (Request $request) =>
+            str_contains($request->url(), '/rest/ppp/secret')
+            && ($request->data()['.proplist'] ?? null) === '.id,name,password,profile,disabled,comment'
+        );
+    }
+
     public function test_api_requires_bearer_token(): void
     {
         config(['services.isp_api.token' => 'test-token']);

@@ -49,6 +49,19 @@ class MikroTikService
         return array_is_list($sessions) ? $sessions : [];
     }
 
+    public function pppSecrets(Router $router): array
+    {
+        $secrets = $this->request(
+            'PPP secrets download',
+            fn () => $this->client($router)->get('/ppp/secret', [
+                '.proplist' => '.id,name,password,profile,disabled,comment',
+            ]),
+        );
+        $router->forceFill(['last_connected_at' => now()])->save();
+
+        return array_is_list($secrets) ? $secrets : [];
+    }
+
     public function syncPackage(Router $router, Package $package): array
     {
         $profiles = $this->request(

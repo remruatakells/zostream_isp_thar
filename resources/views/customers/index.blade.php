@@ -2,7 +2,7 @@
 @section('title', 'Customers')
 @section('eyebrow', 'Subscriber management')
 @section('content')
-<div class="page-actions"><div><h2>PPPoE subscribers</h2><p>Create, renew, suspend and sync customer access.</p></div><div class="actions"><a class="button secondary" href="{{ route('customers.import.create') }}">Import Excel</a><a class="button primary" href="{{ route('customers.create') }}">+ Add customer</a></div></div>
+<div class="page-actions"><div><h2>PPPoE subscribers</h2><p>Create, renew, suspend and sync customer access.</p></div><div class="actions"><a class="button secondary" href="{{ route('customers.import-mikrotik.create') }}">Import MikroTik</a><a class="button secondary" href="{{ route('customers.import.create') }}">Import Excel</a><a class="button primary" href="{{ route('customers.create') }}">+ Add customer</a></div></div>
 <form class="filter-bar" method="GET"><input name="search" value="{{ request('search') }}" placeholder="Search name, phone or username"><select name="router_id"><option value="">All routers</option>@foreach($routers as $router)<option value="{{ $router->id }}" @selected((string) request('router_id') === (string) $router->id)>{{ $router->name }}</option>@endforeach</select><select name="status"><option value="">All statuses</option><option value="active" @selected(request('status') === 'active')>Active</option><option value="suspended" @selected(request('status') === 'suspended')>Suspended</option></select><button class="button secondary">Filter</button></form>
 <article class="panel"><div class="table-wrap"><table><thead><tr><th>Customer</th><th>PPPoE username</th><th>Package</th><th>Router</th><th>Expires</th><th>Status</th><th></th></tr></thead><tbody>
 @forelse($customers as $customer)<tr>

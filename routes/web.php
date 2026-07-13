@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\CustomerImportController;
+use App\Http\Controllers\MikroTikCustomerImportController;
 use App\Http\Controllers\DashboardController;
 use App\Http\Controllers\PackageController;
 use App\Http\Controllers\PaymentController;
@@ -31,6 +32,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/customers/import', [CustomerImportController::class, 'create'])->name('customers.import.create');
     Route::post('/customers/import', [CustomerImportController::class, 'store'])->name('customers.import.store');
     Route::get('/customers-import-template', [CustomerImportController::class, 'template'])->name('customers.import.template');
+    Route::get('/customers/import-mikrotik', [MikroTikCustomerImportController::class, 'create'])->name('customers.import-mikrotik.create');
+    Route::post('/customers/import-mikrotik', [MikroTikCustomerImportController::class, 'store'])->name('customers.import-mikrotik.store');
     Route::resource('customers', CustomerController::class)->except('show');
 
     Route::resource('payments', PaymentController::class)->only(['index', 'store', 'destroy']);
