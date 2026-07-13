@@ -7,7 +7,11 @@
 <form class="form-card form-grid" method="POST" action="{{ $customer->exists ? route('customers.update', $customer) : route('customers.store') }}">@csrf @if($customer->exists) @method('PUT') @endif
     <label>Full name<input name="name" value="{{ old('name', $customer->name) }}" required placeholder="Customer name"></label>
     <label>Phone<input name="phone" value="{{ old('phone', $customer->phone) }}" placeholder="+91..."></label>
-    <label>Router<select name="router_id" required><option value="">Choose router</option>@foreach($routers as $router)<option value="{{ $router->id }}" @selected(old('router_id', $customer->router_id) == $router->id)>{{ $router->name }}</option>@endforeach</select></label>
+    @if($customer->exists)
+        <label>Router<select disabled><option>{{ $customer->router->name }}</option></select><input type="hidden" name="router_id" value="{{ $customer->router_id }}"><small class="form-help">A synced customer cannot be moved silently to another router.</small></label>
+    @else
+        <label>Router<select name="router_id" required><option value="">Choose router</option>@foreach($routers as $router)<option value="{{ $router->id }}" @selected(old('router_id') == $router->id)>{{ $router->name }}</option>@endforeach</select></label>
+    @endif
     <label>Package<select name="package_id" required><option value="">Choose package</option>@foreach($packages as $package)<option value="{{ $package->id }}" @selected(old('package_id', $customer->package_id) == $package->id)>{{ $package->name }} · ₹{{ number_format($package->price, 0) }}</option>@endforeach</select></label>
     <label>PPPoE username<input name="username" value="{{ old('username', $customer->username) }}" required autocomplete="off" placeholder="customer001"></label>
     <label>PPPoE password<input type="password" name="password" {{ $customer->exists ? '' : 'required' }} autocomplete="new-password" placeholder="{{ $customer->exists ? 'Leave blank to keep current password' : 'PPPoE password' }}"></label>

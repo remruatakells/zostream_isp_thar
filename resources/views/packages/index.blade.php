@@ -7,7 +7,7 @@
 @forelse($packages as $package)<tr>
     <td><strong>{{ $package->name }}</strong><small><span class="badge {{ $package->is_active ? '' : 'off' }}">{{ $package->is_active ? 'Active' : 'Hidden' }}</span></small></td>
     <td><code>{{ $package->mikrotik_profile }}</code></td><td>{{ $package->rate_limit ?: 'Unlimited' }}</td><td>₹{{ number_format($package->price, 0) }}</td><td>{{ $package->validity_days }} days</td><td>{{ $package->customers_count }}</td>
-    <td><div class="actions"><form method="POST" action="{{ route('packages.sync', $package) }}">@csrf<button class="button small secondary">Sync</button></form><a class="icon-button" href="{{ route('packages.edit', $package) }}">Edit</a><form data-confirm="Delete this package?" method="POST" action="{{ route('packages.destroy', $package) }}">@csrf @method('DELETE')<button class="icon-button">Delete</button></form></div></td>
+    <td><div class="actions"><form class="actions" method="POST" action="{{ route('packages.sync', $package) }}">@csrf<select name="router_id" aria-label="Router to sync"><option value="">All active routers</option>@foreach($routers as $router)<option value="{{ $router->id }}">{{ $router->name }}</option>@endforeach</select><button class="button small secondary">Sync</button></form><a class="icon-button" href="{{ route('packages.edit', $package) }}">Edit</a><form data-confirm="Delete this package?" method="POST" action="{{ route('packages.destroy', $package) }}">@csrf @method('DELETE')<button class="icon-button">Delete</button></form></div></td>
 </tr>@empty<tr><td colspan="7" class="empty">No package created yet.</td></tr>@endforelse
 </tbody></table></div></article>
 @endsection

@@ -180,4 +180,86 @@ class AdminPanelTest extends TestCase
             $request->method() === 'PATCH' && str_contains($request->url(), '/rest/ppp/profile/')
         );
     }
+
+    public function test_the_same_pppoe_username_can_exist_on_different_routers_only(): void
+    {
+        $user = User::factory()->create();
+        $routerOne = Router::create([
+            'name' => 'POP One', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $routerTwo = Router::create([
+            'name' => 'POP Two', 'host' => '10.77.0.3', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Starter', 'mikrotik_profile' => 'starter',
+            'rate_limit' => '10M/10M', 'price' => 499,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+
+        Http::fake(function (Request $request) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
+                return Http::response([['.id' => '*1', 'name' => 'starter']]);
+            }
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
+                return Http::response([]);
+            }
+
+            return Http::response(['.id' => '*2']);
+        });
+
+        $payload = [
+            'package_id' => $package->id,
+            'name' => 'Shared Username',
+            'username' => 'customer001',
+            'password' => 'customer-secret',
+            'status' => 'active',
+            'expires_at' => now()->addMonth()->toDateString(),
+        ];
+
+        $this->actingAs($user)->post('/customers', $payload + ['router_id' => $routerOne->id])
+            ->assertSessionHasNoErrors();
+        $this->actingAs($user)->post('/customers', $payload + ['router_id' => $routerTwo->id])
+            ->assertSessionHasNoErrors();
+
+        $this->assertDatabaseCount('customers', 2);
+        $this->actingAs($user)->post('/customers', $payload + ['router_id' => $routerOne->id])
+            ->assertSessionHasErrors('username');
+        $this->assertDatabaseCount('customers', 2);
+    }
+
+    public function test_package_sync_can_target_one_router(): void
+    {
+        $user = User::factory()->create();
+        Router::create([
+            'name' => 'POP One', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $routerTwo = Router::create([
+            'name' => 'POP Two', 'host' => '10.77.0.3', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Starter', 'mikrotik_profile' => 'starter',
+            'rate_limit' => '10M/10M', 'price' => 499,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+
+        Http::fake([
+            '*' => Http::response([['.id' => '*1', 'name' => 'starter']]),
+        ]);
+
+        $this->actingAs($user)->post(route('packages.sync', $package), [
+            'router_id' => $routerTwo->id,
+        ])->assertSessionHas('success', 'Package synced to POP Two.');
+
+        Http::assertSentCount(2);
+        Http::assertSent(fn (Request $request) => str_contains($request->url(), '10.77.0.3'));
+        Http::assertNotSent(fn (Request $request) => str_contains($request->url(), '10.77.0.2'));
+    }
 }

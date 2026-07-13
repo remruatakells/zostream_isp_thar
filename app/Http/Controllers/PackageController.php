@@ -15,7 +15,10 @@ class PackageController extends Controller
 {
     public function index(): View
     {
-        return view('packages.index', ['packages' => Package::withCount('customers')->latest()->get()]);
+        return view('packages.index', [
+            'packages' => Package::withCount('customers')->latest()->get(),
+            'routers' => Router::where('is_active', true)->orderBy('name')->get(),
+        ]);
     }
 
     public function create(): View
@@ -52,24 +55,35 @@ class PackageController extends Controller
         return back()->with('success', 'Package deleted.');
     }
 
-    public function sync(Package $package, MikroTikService $mikrotik): RedirectResponse
+    public function sync(Request $request, Package $package, MikroTikService $mikrotik): RedirectResponse
     {
+        $data = $request->validate([
+            'router_id' => [
+                'nullable',
+                Rule::exists('routers', 'id')->where(fn ($query) => $query->where('is_active', true)),
+            ],
+        ]);
+        $routers = filled($data['router_id'] ?? null)
+            ? Router::whereKey($data['router_id'])->get()
+            : Router::where('is_active', true)->get();
         $success = 0;
         $errors = [];
-        foreach (Router::where('is_active', true)->get() as $router) {
+        foreach ($routers as $router) {
             try {
                 $mikrotik->syncPackage($router, $package);
                 $success++;
             } catch (Throwable $e) {
                 report($e);
-                $errors[] = $router->name;
+                $errors[] = "{$router->name}: {$e->getMessage()}";
             }
         }
         if ($errors) {
-            return back()->with('error', "Synced {$success}; failed: ".implode(', ', $errors));
+            return back()->with('error', "Synced {$success}; failed — ".implode(' | ', $errors));
         }
 
-        return back()->with('success', "Package synced to {$success} router(s).");
+        $target = $routers->count() === 1 ? $routers->first()->name : "{$success} routers";
+
+        return back()->with('success', "Package synced to {$target}.");
     }
 
     private function validated(Request $request, ?Package $package = null): array

@@ -22,9 +22,13 @@ class CustomerController extends Controller
                 ->orWhere('username', 'like', '%'.$request->string('search').'%')
                 ->orWhere('phone', 'like', '%'.$request->string('search').'%')))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
+            ->when($request->filled('router_id'), fn ($q) => $q->where('router_id', $request->integer('router_id')))
             ->latest()->paginate(15)->withQueryString();
 
-        return view('customers.index', compact('customers'));
+        return view('customers.index', [
+            'customers' => $customers,
+            'routers' => Router::orderBy('name')->get(),
+        ]);
     }
 
     public function create(): View
@@ -90,12 +94,23 @@ class CustomerController extends Controller
     private function validated(Request $request, ?Customer $customer = null): array
     {
         return $request->validate([
-            'router_id' => ['required', 'exists:routers,id'],
+            'router_id' => array_values(array_filter([
+                'required',
+                'exists:routers,id',
+                $customer ? Rule::in([$customer->router_id]) : null,
+            ])),
             'package_id' => ['required', 'exists:packages,id'],
             'name' => ['required', 'string', 'max:150'],
             'phone' => ['nullable', 'string', 'max:30'],
             'address' => ['nullable', 'string', 'max:1000'],
-            'username' => ['required', 'string', 'max:100', Rule::unique('customers')->ignore($customer)],
+            'username' => [
+                'required',
+                'string',
+                'max:100',
+                Rule::unique('customers')->where(
+                    fn ($query) => $query->where('router_id', $request->integer('router_id'))
+                )->ignore($customer),
+            ],
             'password' => [$customer ? 'nullable' : 'required', 'string', 'max:255'],
             'status' => ['required', Rule::in(['active', 'suspended'])],
             'expires_at' => ['nullable', 'date'],

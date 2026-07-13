@@ -32,7 +32,7 @@ class IspController extends Controller
 
     public function storeCustomer(Request $request, MikroTikService $mikrotik): JsonResponse
     {
-        $data = $request->validate($this->customerRules());
+        $data = $request->validate($this->customerRules($request));
         $customer = Customer::create($data);
         $mikrotik->syncCustomer($customer);
 
@@ -41,7 +41,7 @@ class IspController extends Controller
 
     public function updateCustomer(Request $request, Customer $customer, MikroTikService $mikrotik): JsonResponse
     {
-        $rules = $this->customerRules($customer);
+        $rules = $this->customerRules($request, $customer);
         $rules['password'] = ['nullable', 'string', 'max:255'];
         $data = $request->validate($rules);
         if (blank($data['password'] ?? null)) {
@@ -83,15 +83,26 @@ class IspController extends Controller
         return response()->json(['message' => 'Connected.', 'data' => $mikrotik->test($router)]);
     }
 
-    private function customerRules(?Customer $customer = null): array
+    private function customerRules(Request $request, ?Customer $customer = null): array
     {
         return [
-            'router_id' => ['required', 'exists:routers,id'],
+            'router_id' => array_values(array_filter([
+                'required',
+                'exists:routers,id',
+                $customer ? Rule::in([$customer->router_id]) : null,
+            ])),
             'package_id' => ['required', 'exists:packages,id'],
             'name' => ['required', 'string', 'max:150'],
             'phone' => ['nullable', 'string', 'max:30'],
             'address' => ['nullable', 'string', 'max:1000'],
-            'username' => ['required', 'string', 'max:100', Rule::unique('customers')->ignore($customer)],
+            'username' => [
+                'required',
+                'string',
+                'max:100',
+                Rule::unique('customers')->where(
+                    fn ($query) => $query->where('router_id', $request->integer('router_id'))
+                )->ignore($customer),
+            ],
             'password' => ['required', 'string', 'max:255'],
             'status' => ['required', Rule::in(['active', 'suspended'])],
             'expires_at' => ['nullable', 'date'],
