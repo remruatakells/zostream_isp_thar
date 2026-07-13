@@ -53,10 +53,13 @@ class MikroTikService
         ], fn ($value) => $value !== null && $value !== '');
 
         if ($existing && isset($existing['.id'])) {
+            $updatePayload = $payload;
+            unset($updatePayload['name']);
+
             return $this->request(
                 'PPP profile update',
                 fn () => $this->client($router)
-                    ->patch('/ppp/profile/'.rawurlencode($existing['.id']), $payload),
+                    ->patch('/ppp/profile/'.rawurlencode($existing['.id']), $updatePayload),
             );
         }
 
@@ -75,7 +78,7 @@ class MikroTikService
         // customer is created or updated so first-time syncs cannot fail with
         // RouterOS' "input does not match any value of profile" response.
         if ($customer->package) {
-            $this->syncPackage($customer->router, $customer->package);
+            $this->ensurePackageProfileExists($customer->router, $customer->package);
         }
 
         // Fetch only the two non-sensitive fields needed for matching. Asking
@@ -117,6 +120,32 @@ class MikroTikService
         $customer->forceFill(['mikrotik_id' => $mikrotikId, 'last_synced_at' => now()])->save();
 
         return $result;
+    }
+
+    private function ensurePackageProfileExists(Router $router, Package $package): void
+    {
+        $profiles = $this->request(
+            'PPP profile lookup',
+            fn () => $this->client($router)->get('/ppp/profile', [
+                'name' => $package->mikrotik_profile,
+                '.proplist' => '.id,name',
+            ]),
+        );
+
+        if (collect($profiles)->contains('name', $package->mikrotik_profile)) {
+            return;
+        }
+
+        $payload = array_filter([
+            'name' => $package->mikrotik_profile,
+            'rate-limit' => $package->rate_limit,
+            'comment' => "ZoStream ISP package: {$package->name}",
+        ], fn ($value) => $value !== null && $value !== '');
+
+        $this->request(
+            'PPP profile creation',
+            fn () => $this->client($router)->put('/ppp/profile', $payload),
+        );
     }
 
     private function request(string $operation, callable $send): array

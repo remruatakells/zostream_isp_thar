@@ -126,4 +126,58 @@ class AdminPanelTest extends TestCase
         $this->assertSame('*2', $customer->mikrotik_id);
         $this->assertNotNull($customer->last_synced_at);
     }
+
+    public function test_customer_sync_does_not_update_an_existing_ppp_profile(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Test Router',
+            'host' => '10.77.0.2',
+            'port' => 80,
+            'username' => 'zostream-api',
+            'password' => 'router-secret',
+            'use_ssl' => false,
+            'verify_ssl' => false,
+            'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Starter 10 Mbps',
+            'mikrotik_profile' => 'starter-10m',
+            'rate_limit' => '10M/10M',
+            'price' => 499,
+            'validity_days' => 30,
+            'is_active' => true,
+        ]);
+
+        Http::fake(function (Request $request) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
+                return Http::response([['.id' => '*1', 'name' => 'starter-10m']]);
+            }
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
+                return Http::response([['.id' => '*2', 'name' => 'TESTUSER1']]);
+            }
+            if ($request->method() === 'PATCH' && str_contains($request->url(), '/rest/ppp/secret/')) {
+                return Http::response(['.id' => '*2']);
+            }
+
+            return Http::response([], 500);
+        });
+
+        $this->actingAs($user)->post('/customers', [
+            'router_id' => $router->id,
+            'package_id' => $package->id,
+            'name' => 'Test Customer',
+            'phone' => '9876543210',
+            'username' => 'TESTUSER1',
+            'password' => 'customer-secret',
+            'status' => 'active',
+            'expires_at' => now()->addMonth()->toDateString(),
+        ])->assertRedirect('/customers')
+            ->assertSessionHas('success', 'Customer created and synced with MikroTik.');
+
+        Http::assertSentCount(3);
+        Http::assertNotSent(fn (Request $request) =>
+            $request->method() === 'PATCH' && str_contains($request->url(), '/rest/ppp/profile/')
+        );
+    }
 }
