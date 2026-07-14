@@ -25,7 +25,7 @@ class RadiusService
 
         $expired = $customer->expires_at?->lt(today()) ?? false;
         if ($expired && $customer->status === 'active') {
-            $customer->update(['status' => 'suspended']);
+            $customer->forceFill(['status' => 'suspended'])->saveQuietly();
         }
         $active = $customer->status === 'active' && ! $expired;
 
@@ -59,7 +59,7 @@ class RadiusService
                 ]);
             }
 
-            $customer->forceFill(['last_synced_at' => now(), 'mikrotik_id' => null])->save();
+            $customer->forceFill(['last_synced_at' => now(), 'mikrotik_id' => null])->saveQuietly();
         });
 
         $disconnected = 0;
@@ -72,10 +72,19 @@ class RadiusService
 
     public function deleteCustomer(Customer $customer): int
     {
-        return DB::transaction(function () use ($customer): int {
-            $deleted = DB::table('radcheck')->where('username', $customer->username)
+        return $this->deleteUsername($customer->username);
+    }
+
+    public function deleteUsername(string $username): int
+    {
+        if (blank($username)) {
+            return 0;
+        }
+
+        return DB::transaction(function () use ($username): int {
+            $deleted = DB::table('radcheck')->where('username', $username)
                 ->whereIn('attribute', self::CHECK_ATTRIBUTES)->delete();
-            $deleted += DB::table('radreply')->where('username', $customer->username)
+            $deleted += DB::table('radreply')->where('username', $username)
                 ->whereIn('attribute', self::REPLY_ATTRIBUTES)->delete();
 
             return $deleted;

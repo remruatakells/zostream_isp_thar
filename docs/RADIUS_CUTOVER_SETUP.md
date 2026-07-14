@@ -12,6 +12,8 @@ Laravel writes:
 
 REST remains enabled over WireGuard for router health checks and immediate disconnection of a suspended active PPP session. Laravel no longer creates or updates customer entries in MikroTik PPP Secrets.
 
+Admin changes are synchronized automatically. Creating, editing, importing, suspending, renewing or deleting a customer immediately updates the RADIUS SQL rows. Changing a package speed refreshes every assigned customer's `Mikrotik-Rate-Limit`. The customer **Sync** button and `isp:radius-sync` command are retained only for initial backfill and recovery; normal daily work does not require manual synchronization.
+
 ## 1. Back up before changing authentication
 
 Back up the application database and export the MikroTik configuration. Do not remove existing PPP Secrets yet. Complete one test customer from end to end first.
@@ -143,7 +145,7 @@ Choose a default PPP profile that already has the correct local address, remote 
 ## 8. Test before removing PPP Secrets
 
 1. Create a new test customer in the admin panel with a username that does not exist in MikroTik PPP Secrets.
-2. Select a package and click **Sync**.
+2. Select a package and save. RADIUS synchronization happens automatically.
 3. Confirm the row exists in `radcheck` and the speed exists in `radreply`.
 4. Log in from the test customer's PPPoE router/CPE.
 5. Confirm the session appears under **PPP → Active Connections**.

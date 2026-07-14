@@ -157,6 +157,12 @@ class AdminPanelTest extends TestCase
             'status' => 'suspended',
         ]);
         $this->assertSame('pass-one', Customer::where('username', 'excel001')->firstOrFail()->password);
+        $this->assertDatabaseHas('radcheck', [
+            'username' => 'excel001', 'attribute' => 'Cleartext-Password', 'value' => 'pass-one',
+        ]);
+        $this->assertDatabaseHas('radcheck', [
+            'username' => 'excel002', 'attribute' => 'Auth-Type', 'value' => 'Reject',
+        ]);
     }
 
     public function test_admin_can_download_the_excel_import_template(): void
@@ -239,7 +245,7 @@ class AdminPanelTest extends TestCase
 
         $this->assertNotNull($active->fresh()->last_synced_at);
         $this->assertNotNull($lastActive->fresh()->last_synced_at);
-        $this->assertNull($suspended->fresh()->last_synced_at);
+        $this->assertNotNull($suspended->fresh()->last_synced_at);
         $this->assertDatabaseHas('radcheck', [
             'username' => 'bulk-active', 'attribute' => 'Cleartext-Password', 'value' => 'password',
         ]);
@@ -578,7 +584,7 @@ class AdminPanelTest extends TestCase
             'package_id' => $matchedPackage->id,
             'username' => 'olduser1',
             'status' => 'active',
-            'mikrotik_id' => '*1',
+            'mikrotik_id' => null,
             'expires_at' => '2027-01-31 00:00:00',
         ]);
         $this->assertDatabaseHas('customers', [
@@ -601,6 +607,50 @@ class AdminPanelTest extends TestCase
         $this->getJson('/api/v1/dashboard')->assertUnauthorized();
         $this->withToken('test-token')->getJson('/api/v1/dashboard')
             ->assertOk()->assertJsonPath('data.customers', 0);
+    }
+
+    public function test_customer_and_package_changes_automatically_refresh_radius_without_manual_sync(): void
+    {
+        $router = Router::create([
+            'name' => 'Automatic Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Automatic Package', 'mikrotik_profile' => 'automatic',
+            'rate_limit' => '10M/10M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $customer = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'name' => 'Automatic Customer', 'username' => 'automatic-user',
+            'password' => 'automatic-password', 'status' => 'active',
+            'expires_at' => today()->addMonth(),
+        ]);
+
+        $this->assertDatabaseHas('radcheck', [
+            'username' => 'automatic-user', 'attribute' => 'Cleartext-Password',
+            'value' => 'automatic-password',
+        ]);
+        $this->assertDatabaseHas('radreply', [
+            'username' => 'automatic-user', 'attribute' => 'Mikrotik-Rate-Limit',
+            'value' => '10M/10M',
+        ]);
+
+        $package->update(['rate_limit' => '30M/30M']);
+        $this->assertDatabaseHas('radreply', [
+            'username' => 'automatic-user', 'attribute' => 'Mikrotik-Rate-Limit',
+            'value' => '30M/30M',
+        ]);
+
+        $customer->update(['status' => 'suspended']);
+        $this->assertDatabaseHas('radcheck', [
+            'username' => 'automatic-user', 'attribute' => 'Auth-Type', 'value' => 'Reject',
+        ]);
+        $this->assertDatabaseMissing('radreply', ['username' => 'automatic-user']);
+
+        $customer->delete();
+        $this->assertDatabaseMissing('radcheck', ['username' => 'automatic-user']);
     }
 
     public function test_customer_sync_writes_radius_password_and_package_speed(): void

@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\Customer;
 use App\Models\Package;
 use App\Models\Router;
-use App\Services\RadiusService;
 use Carbon\Carbon;
 use DateTimeInterface;
 use Illuminate\Http\RedirectResponse;
@@ -73,7 +72,7 @@ class CustomerImportController extends Controller
         ]);
     }
 
-    public function store(Request $request, RadiusService $radius): RedirectResponse
+    public function store(Request $request): RedirectResponse
     {
         $data = $request->validate([
             'router_id' => [
@@ -86,7 +85,6 @@ class CustomerImportController extends Controller
             ],
             'file' => ['required', 'file', 'mimes:xlsx,xls,csv', 'max:10240'],
             'duplicate_action' => ['required', Rule::in(['skip', 'update'])],
-            'sync_to_mikrotik' => ['nullable', 'boolean'],
         ]);
 
         try {
@@ -147,8 +145,6 @@ class CustomerImportController extends Controller
         $created = 0;
         $updated = 0;
         $skipped = 0;
-        $synced = 0;
-        $syncFailed = 0;
         $errors = [];
 
         foreach ($rows as $index => $values) {
@@ -197,22 +193,9 @@ class CustomerImportController extends Controller
                 $created++;
             }
 
-            if ($request->boolean('sync_to_mikrotik')) {
-                try {
-                    $radius->syncCustomer($customer);
-                    $synced++;
-                } catch (Throwable $e) {
-                    report($e);
-                    $syncFailed++;
-                    $errors[] = "Row {$excelRow}: imported locally, but RADIUS sync failed for {$customer->username}: {$e->getMessage()}";
-                }
-            }
         }
 
         $summary = "Excel import complete — {$created} created, {$updated} updated, {$skipped} skipped";
-        if ($request->boolean('sync_to_mikrotik')) {
-            $summary .= ", {$synced} synced, {$syncFailed} sync failed";
-        }
         $summary .= '.';
 
         return redirect()->route('customers.import.create')
