@@ -58,4 +58,7 @@ Artisan::command('isp:radius-sync', function () {
     $this->info("RADIUS sync complete: {$synced} synced; {$failed} failed");
 })->purpose('Write all routers and customers to the FreeRADIUS SQL tables');
 
-Schedule::command('isp:suspend-expired')->hourly()->withoutOverlapping();
+Schedule::command('isp:suspend-expired')
+    ->dailyAt('00:00')
+    ->timezone('Asia/Kolkata')
+    ->withoutOverlapping();
