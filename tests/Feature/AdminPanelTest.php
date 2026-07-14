@@ -162,6 +162,91 @@ class AdminPanelTest extends TestCase
             ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 
+    public function test_admin_can_import_a_jaze_all_users_csv_with_automatic_package_mapping(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Jaze Migration Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $rookie = Package::create([
+            'name' => 'ROOKIE', 'mikrotik_profile' => 'zostream_rookie',
+            'rate_limit' => '10M/10M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $rookie500 = Package::create([
+            'name' => 'ROOKIE 500', 'mikrotik_profile' => 'ROOKIE_500',
+            'rate_limit' => '20M/20M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+
+        $csv = implode("\n", [
+            'Username,Password,First_name,Last_name,Phone,Status,Address_state,Installation_address_line1,Installation_address_city,Installation_address_state,Expiration_time,Group_name,Sub_plan',
+            'ZNET001,password,Lal,Rin,9876543210,active,Mizoram,Lungpho,Aizawl,Mizoram,20-07-2026 00:00:00,ROOKIE,zostream_rookie',
+            'ZNET002,password,Expired,User,9876543211,expired,Mizoram,Lungpho,Aizawl,Mizoram,11-07-2026 00:00:00,ROOKIE,ROOKIE_500',
+            'ZNET003,password,Blocked,User,9876543212,blacklisted,Mizoram,Lungpho,Aizawl,Mizoram,12-07-2026 00:00:00,ROOKIE,zostream_rookie',
+        ]);
+        $file = UploadedFile::fake()->createWithContent('allUsers.csv', $csv);
+
+        $this->actingAs($user)->post(route('customers.import.store'), [
+            'router_id' => $router->id,
+            'file' => $file,
+            'duplicate_action' => 'skip',
+        ])->assertRedirect(route('customers.import.create'))
+            ->assertSessionHas('success', 'Excel import complete — 3 created, 0 updated, 0 skipped.');
+
+        $this->assertDatabaseHas('customers', [
+            'username' => 'ZNET001',
+            'name' => 'Lal Rin',
+            'phone' => '9876543210',
+            'address' => 'Lungpho, Aizawl, Mizoram',
+            'package_id' => $rookie->id,
+            'status' => 'active',
+            'expires_at' => '2026-07-20 00:00:00',
+        ]);
+        $this->assertDatabaseHas('customers', [
+            'username' => 'ZNET002',
+            'package_id' => $rookie500->id,
+            'status' => 'suspended',
+            'expires_at' => '2026-07-11 00:00:00',
+        ]);
+        $this->assertDatabaseHas('customers', [
+            'username' => 'ZNET003',
+            'package_id' => $rookie->id,
+            'status' => 'suspended',
+        ]);
+        $this->assertSame('password', Customer::where('username', 'ZNET001')->firstOrFail()->password);
+    }
+
+    public function test_jaze_import_stops_before_writing_when_sub_plan_has_no_matching_active_package(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Jaze Migration Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        Package::create([
+            'name' => 'ROOKIE', 'mikrotik_profile' => 'zostream_rookie',
+            'rate_limit' => '10M/10M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $file = UploadedFile::fake()->createWithContent('allUsers.csv', implode("\n", [
+            'Username,Password,First_name,Status,Expiration_time,Group_name,Sub_plan',
+            'ZNET999,password,Unknown Plan,active,20-07-2026 00:00:00,UNKNOWN,missing_profile',
+        ]));
+
+        $this->actingAs($user)->from(route('customers.import.create'))->post(route('customers.import.store'), [
+            'router_id' => $router->id,
+            'file' => $file,
+            'duplicate_action' => 'skip',
+        ])->assertRedirect(route('customers.import.create'))
+            ->assertSessionHasErrors('file');
+
+        $this->assertDatabaseMissing('customers', ['username' => 'ZNET999']);
+    }
+
     public function test_admin_can_pull_existing_ppp_secrets_from_one_mikrotik(): void
     {
         $user = User::factory()->create();
@@ -213,8 +298,7 @@ class AdminPanelTest extends TestCase
         $this->assertDatabaseMissing('customers', ['username' => 'hidden-pass']);
         $this->assertSame('old-pass-1', Customer::where('username', 'olduser1')->firstOrFail()->password);
 
-        Http::assertSent(fn (Request $request) =>
-            str_contains($request->url(), '/rest/ppp/secret')
+        Http::assertSent(fn (Request $request) => str_contains($request->url(), '/rest/ppp/secret')
             && ($request->data()['.proplist'] ?? null) === '.id,name,password,profile,disabled,comment'
         );
     }
@@ -343,8 +427,7 @@ class AdminPanelTest extends TestCase
             ->assertSessionHas('success', 'Customer created and synced with MikroTik.');
 
         Http::assertSentCount(3);
-        Http::assertNotSent(fn (Request $request) =>
-            $request->method() === 'PATCH' && str_contains($request->url(), '/rest/ppp/profile/')
+        Http::assertNotSent(fn (Request $request) => $request->method() === 'PATCH' && str_contains($request->url(), '/rest/ppp/profile/')
         );
     }
 

@@ -29,6 +29,8 @@ class CustomerImportController extends Controller
         'full_name' => 'name',
         'customer' => 'name',
         'customer_name' => 'name',
+        'first_name' => 'first_name',
+        'last_name' => 'last_name',
         'phone' => 'phone',
         'mobile' => 'phone',
         'mobile_number' => 'phone',
@@ -36,6 +38,16 @@ class CustomerImportController extends Controller
         'contact' => 'phone',
         'address' => 'address',
         'installation_address' => 'address',
+        'address_line1' => 'address_line1',
+        'address_line2' => 'address_line2',
+        'address_city' => 'address_city',
+        'address_state' => 'address_state',
+        'address_pin' => 'address_pin',
+        'installation_address_line1' => 'installation_address_line1',
+        'installation_address_line2' => 'installation_address_line2',
+        'installation_address_city' => 'installation_address_city',
+        'installation_address_state' => 'installation_address_state',
+        'installation_address_pin' => 'installation_address_pin',
         'username' => 'username',
         'user' => 'username',
         'pppoe_username' => 'username',
@@ -47,6 +59,9 @@ class CustomerImportController extends Controller
         'expiry' => 'expires_at',
         'expiry_date' => 'expires_at',
         'expiration_date' => 'expires_at',
+        'expiration_time' => 'expires_at',
+        'group_name' => 'package_group',
+        'sub_plan' => 'package_reference',
     ];
 
     public function create(): View
@@ -65,7 +80,7 @@ class CustomerImportController extends Controller
                 Rule::exists('routers', 'id')->where(fn ($query) => $query->where('is_active', true)),
             ],
             'package_id' => [
-                'required',
+                'nullable',
                 Rule::exists('packages', 'id')->where(fn ($query) => $query->where('is_active', true)),
             ],
             'file' => ['required', 'file', 'mimes:xlsx,xls,csv', 'max:10240'],
@@ -98,7 +113,35 @@ class CustomerImportController extends Controller
             }
         }
 
+        $isJazeImport = in_array('package_reference', $headers, true)
+            || in_array('package_group', $headers, true);
+        if (! $isJazeImport && blank($data['package_id'] ?? null)) {
+            return back()->withInput()->withErrors([
+                'package_id' => 'Choose a package for a generic Excel/CSV file. Jaze exports are matched automatically from Sub_plan.',
+            ]);
+        }
+
         $router = Router::findOrFail($data['router_id']);
+        $packages = Package::where('is_active', true)->get();
+        if ($isJazeImport) {
+            $requiredProfiles = collect($rows)
+                ->map(fn (array $values) => $this->associateRow($headers, $values))
+                ->pluck('package_reference')
+                ->map(fn ($value) => trim((string) $value))
+                ->filter()
+                ->unique(fn (string $value) => Str::lower($value))
+                ->values();
+            $availableProfiles = $packages->pluck('mikrotik_profile')
+                ->map(fn (string $value) => Str::lower(trim($value)));
+            $missingProfiles = $requiredProfiles->reject(
+                fn (string $value) => $availableProfiles->contains(Str::lower($value))
+            );
+            if ($missingProfiles->isNotEmpty()) {
+                return back()->withInput()->withErrors([
+                    'file' => 'Import stopped before creating customers. Create and activate packages with these exact MikroTik profiles: '.$missingProfiles->implode(', ').'.',
+                ]);
+            }
+        }
         $created = 0;
         $updated = 0;
         $skipped = 0;
@@ -119,10 +162,12 @@ class CustomerImportController extends Controller
             }
 
             try {
-                $customerData = $this->customerData($row, $router->id, (int) $data['package_id']);
+                $package = $this->packageForRow($row, $packages, $data['package_id'] ?? null, $isJazeImport);
+                $customerData = $this->customerData($row, $router->id, $package->id);
             } catch (Throwable $e) {
                 $skipped++;
                 $errors[] = "Row {$excelRow}: {$e->getMessage()}";
+
                 continue;
             }
 
@@ -133,6 +178,7 @@ class CustomerImportController extends Controller
             if ($customer && $data['duplicate_action'] === 'skip') {
                 $skipped++;
                 $errors[] = "Row {$excelRow}: {$customerData['username']} already exists on {$router->name}; skipped.";
+
                 continue;
             }
 
@@ -225,16 +271,41 @@ class CustomerImportController extends Controller
         $statusValue = Str::lower(trim((string) ($row['status'] ?? 'active')));
         $status = match ($statusValue) {
             '', 'active', 'enabled', 'yes', '1' => 'active',
-            'suspended', 'disabled', 'inactive', 'no', '0' => 'suspended',
+            'suspended', 'disabled', 'inactive', 'expired', 'blacklisted', 'no', '0' => 'suspended',
             default => throw new \InvalidArgumentException("invalid status '{$statusValue}'. Use active or suspended."),
         };
+
+        $name = trim(implode(' ', array_filter([
+            trim((string) ($row['first_name'] ?? '')),
+            trim((string) ($row['last_name'] ?? '')),
+        ])));
+        $name = trim((string) ($row['name'] ?? '')) ?: ($name ?: $username);
+
+        $address = trim((string) ($row['address'] ?? ''));
+        if ($address === '') {
+            $address = implode(', ', array_values(array_unique(array_filter(array_map(
+                fn ($value) => trim((string) $value),
+                [
+                    $row['installation_address_line1'] ?? null,
+                    $row['installation_address_line2'] ?? null,
+                    $row['installation_address_city'] ?? null,
+                    $row['installation_address_state'] ?? null,
+                    $row['installation_address_pin'] ?? null,
+                    $row['address_line1'] ?? null,
+                    $row['address_line2'] ?? null,
+                    $row['address_city'] ?? null,
+                    $row['address_state'] ?? null,
+                    $row['address_pin'] ?? null,
+                ],
+            )))));
+        }
 
         return [
             'router_id' => $routerId,
             'package_id' => $packageId,
-            'name' => trim((string) ($row['name'] ?? '')) ?: $username,
+            'name' => $name,
             'phone' => filled($row['phone'] ?? null) ? trim((string) $row['phone']) : null,
-            'address' => filled($row['address'] ?? null) ? trim((string) $row['address']) : null,
+            'address' => $address !== '' ? $address : null,
             'username' => $username,
             'password' => $password,
             'status' => $status,
@@ -255,7 +326,7 @@ class CustomerImportController extends Controller
         }
 
         $value = trim((string) $value);
-        foreach (['Y-m-d', 'd/m/Y', 'd-m-Y', 'm/d/Y'] as $format) {
+        foreach (['Y-m-d H:i:s', 'd/m/Y H:i:s', 'd-m-Y H:i:s', 'm/d/Y H:i:s', 'Y-m-d', 'd/m/Y', 'd-m-Y', 'm/d/Y'] as $format) {
             try {
                 $date = Carbon::createFromFormat('!'.$format, $value);
                 if ($date && $date->format($format) === $value) {
@@ -266,6 +337,34 @@ class CustomerImportController extends Controller
             }
         }
 
-        throw new \InvalidArgumentException("invalid expiry date '{$value}'. Use YYYY-MM-DD or DD/MM/YYYY.");
+        throw new \InvalidArgumentException("invalid expiry date '{$value}'. Use YYYY-MM-DD, DD/MM/YYYY or the Jaze DD-MM-YYYY HH:MM:SS format.");
+    }
+
+    private function packageForRow(array $row, $packages, mixed $fallbackPackageId, bool $isJazeImport): Package
+    {
+        if (! $isJazeImport) {
+            return $packages->firstWhere('id', (int) $fallbackPackageId)
+                ?? throw new \InvalidArgumentException('the selected package is not active.');
+        }
+
+        $reference = trim((string) ($row['package_reference'] ?? ''));
+        $group = trim((string) ($row['package_group'] ?? ''));
+        $package = $packages->first(
+            fn (Package $candidate) => $reference !== ''
+                && Str::lower($candidate->mikrotik_profile) === Str::lower($reference)
+        );
+        $package ??= $packages->first(
+            fn (Package $candidate) => $reference === '' && $group !== ''
+                && (Str::lower($candidate->name) === Str::lower($group)
+                    || Str::lower($candidate->mikrotik_profile) === Str::lower($group))
+        );
+
+        if ($package) {
+            return $package;
+        }
+
+        $label = $reference !== '' ? "Sub_plan '{$reference}'" : "Group_name '{$group}'";
+
+        throw new \InvalidArgumentException("no active admin package matches {$label}. Set the package MikroTik profile to the exact Jaze Sub_plan value.");
     }
 }
