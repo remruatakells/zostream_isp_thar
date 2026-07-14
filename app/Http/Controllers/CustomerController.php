@@ -20,7 +20,7 @@ class CustomerController extends Controller
     {
         $customers = $this->filteredQuery($request)
             ->with(['router', 'package'])
-            ->latest()->paginate(15)->withQueryString();
+            ->orderBy('username')->paginate(15)->withQueryString();
 
         return view('customers.index', [
             'customers' => $customers,
