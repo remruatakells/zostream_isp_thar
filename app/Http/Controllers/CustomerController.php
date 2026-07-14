@@ -89,7 +89,7 @@ class CustomerController extends Controller
                         $profileKey = $customer->router_id.':'.$customer->package_id;
                         if (! array_key_exists($profileKey, $preparedProfiles)) {
                             try {
-                                $mikrotik->syncPackage($customer->router, $customer->package);
+                                $mikrotik->ensurePackageProfileExists($customer->router, $customer->package);
                                 $preparedProfiles[$profileKey] = true;
                             } catch (Throwable $e) {
                                 $preparedProfiles[$profileKey] = $e->getMessage();

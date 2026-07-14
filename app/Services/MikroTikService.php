@@ -129,10 +129,12 @@ class MikroTikService
         ];
 
         if ($existing && isset($existing['.id'])) {
+            $updatePayload = $payload;
+            unset($updatePayload['name']);
             $result = $this->request(
                 'PPP secret update',
                 fn () => $this->client($customer->router)
-                    ->patch('/ppp/secret/'.rawurlencode($existing['.id']), $payload),
+                    ->patch('/ppp/secret/'.rawurlencode($existing['.id']), $updatePayload),
             );
             $mikrotikId = $existing['.id'];
         } else {
@@ -148,7 +150,7 @@ class MikroTikService
         return $result;
     }
 
-    private function ensurePackageProfileExists(Router $router, Package $package): void
+    public function ensurePackageProfileExists(Router $router, Package $package): void
     {
         $profiles = $this->request(
             'PPP profile lookup',

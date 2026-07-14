@@ -476,6 +476,11 @@ class AdminPanelTest extends TestCase
         Http::assertSentCount(3);
         Http::assertNotSent(fn (Request $request) => $request->method() === 'PATCH' && str_contains($request->url(), '/rest/ppp/profile/')
         );
+        Http::assertSent(fn (Request $request) => $request->method() === 'PATCH'
+            && str_contains($request->url(), '/rest/ppp/secret/')
+            && ! array_key_exists('name', $request->data())
+            && ($request->data()['profile'] ?? null) === 'starter-10m'
+        );
     }
 
     public function test_the_same_pppoe_username_can_exist_on_different_routers_only(): void
