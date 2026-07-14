@@ -27,6 +27,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/packages/{package}/sync', [PackageController::class, 'sync'])->name('packages.sync');
     Route::resource('packages', PackageController::class)->except('show');
 
+    Route::post('/customers/sync-all', [CustomerController::class, 'syncAll'])->name('customers.sync-all');
     Route::post('/customers/{customer}/sync', [CustomerController::class, 'sync'])->name('customers.sync');
     Route::post('/customers/{customer}/toggle', [CustomerController::class, 'toggle'])->name('customers.toggle');
     Route::get('/customers/import', [CustomerImportController::class, 'create'])->name('customers.import.create');

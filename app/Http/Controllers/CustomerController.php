@@ -6,6 +6,7 @@ use App\Models\Customer;
 use App\Models\Package;
 use App\Models\Router;
 use App\Services\MikroTikService;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -16,13 +17,8 @@ class CustomerController extends Controller
 {
     public function index(Request $request): View
     {
-        $customers = Customer::with(['router', 'package'])
-            ->when($request->filled('search'), fn ($q) => $q->where(fn ($q) => $q
-                ->where('name', 'like', '%'.$request->string('search').'%')
-                ->orWhere('username', 'like', '%'.$request->string('search').'%')
-                ->orWhere('phone', 'like', '%'.$request->string('search').'%')))
-            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
-            ->when($request->filled('router_id'), fn ($q) => $q->where('router_id', $request->integer('router_id')))
+        $customers = $this->filteredQuery($request)
+            ->with(['router', 'package'])
             ->latest()->paginate(15)->withQueryString();
 
         return view('customers.index', [
@@ -71,6 +67,66 @@ class CustomerController extends Controller
         return $this->syncAndRedirect($customer, $mikrotik, 'Customer');
     }
 
+    public function syncAll(Request $request, MikroTikService $mikrotik): RedirectResponse
+    {
+        $request->validate([
+            'search' => ['nullable', 'string', 'max:150'],
+            'status' => ['nullable', Rule::in(['active', 'suspended'])],
+            'router_id' => ['nullable', 'exists:routers,id'],
+        ]);
+
+        $query = $this->filteredQuery($request)->with(['router', 'package']);
+        $total = (clone $query)->count();
+        $synced = 0;
+        $failed = 0;
+        $errors = [];
+        $preparedProfiles = [];
+
+        $query->orderBy('id')->chunkById(50, function ($customers) use ($mikrotik, &$synced, &$failed, &$errors, &$preparedProfiles): void {
+            foreach ($customers as $customer) {
+                try {
+                    if ($customer->package) {
+                        $profileKey = $customer->router_id.':'.$customer->package_id;
+                        if (! array_key_exists($profileKey, $preparedProfiles)) {
+                            try {
+                                $mikrotik->syncPackage($customer->router, $customer->package);
+                                $preparedProfiles[$profileKey] = true;
+                            } catch (Throwable $e) {
+                                $preparedProfiles[$profileKey] = $e->getMessage();
+                            }
+                        }
+                        if ($preparedProfiles[$profileKey] !== true) {
+                            throw new \RuntimeException('Package profile sync failed: '.$preparedProfiles[$profileKey]);
+                        }
+                    }
+
+                    $mikrotik->syncCustomer($customer, ensureProfile: false);
+                    $synced++;
+                } catch (Throwable $e) {
+                    report($e);
+                    $failed++;
+                    if (count($errors) < 5) {
+                        $errors[] = "{$customer->username}: {$e->getMessage()}";
+                    }
+                }
+            }
+        });
+
+        $filters = array_filter($request->only(['search', 'status', 'router_id']), fn ($value) => filled($value));
+        if ($total === 0) {
+            return redirect()->route('customers.index', $filters)->with('warning', 'No customers matched the current filters.');
+        }
+        if ($failed > 0) {
+            return redirect()->route('customers.index', $filters)->with(
+                'warning',
+                "Bulk sync complete — {$synced} synced, {$failed} failed. ".implode(' | ', $errors)
+            );
+        }
+
+        return redirect()->route('customers.index', $filters)
+            ->with('success', "Bulk sync complete — {$synced} of {$total} customers synced with MikroTik.");
+    }
+
     public function toggle(Customer $customer, MikroTikService $mikrotik): RedirectResponse
     {
         $customer->update(['status' => $customer->status === 'active' ? 'suspended' : 'active']);
@@ -89,6 +145,17 @@ class CustomerController extends Controller
 
             return redirect()->route('customers.index')->with('warning', $message.' locally, but MikroTik sync failed: '.$e->getMessage());
         }
+    }
+
+    private function filteredQuery(Request $request): Builder
+    {
+        return Customer::query()
+            ->when($request->filled('search'), fn ($q) => $q->where(fn ($q) => $q
+                ->where('name', 'like', '%'.$request->string('search').'%')
+                ->orWhere('username', 'like', '%'.$request->string('search').'%')
+                ->orWhere('phone', 'like', '%'.$request->string('search').'%')))
+            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
+            ->when($request->filled('router_id'), fn ($q) => $q->where('router_id', $request->integer('router_id')));
     }
 
     private function validated(Request $request, ?Customer $customer = null): array

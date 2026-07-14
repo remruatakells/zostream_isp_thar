@@ -95,7 +95,7 @@ class MikroTikService
         );
     }
 
-    public function syncCustomer(Customer $customer): array
+    public function syncCustomer(Customer $customer, bool $ensureProfile = true): array
     {
         $customer->loadMissing(['router', 'package']);
 
@@ -103,7 +103,7 @@ class MikroTikService
         // selected router. Ensure the package profile is present before the
         // customer is created or updated so first-time syncs cannot fail with
         // RouterOS' "input does not match any value of profile" response.
-        if ($customer->package) {
+        if ($ensureProfile && $customer->package) {
             $this->ensurePackageProfileExists($customer->router, $customer->package);
         }
 

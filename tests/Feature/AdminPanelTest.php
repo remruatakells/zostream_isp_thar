@@ -162,6 +162,53 @@ class AdminPanelTest extends TestCase
             ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     }
 
+    public function test_admin_can_sync_all_customers_matching_the_current_filters(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Bulk Sync Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Bulk Package', 'mikrotik_profile' => 'bulk-profile',
+            'rate_limit' => '10M/10M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $active = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'name' => 'Active Customer', 'username' => 'bulk-active',
+            'password' => 'password', 'status' => 'active',
+            'expires_at' => today()->addMonth(),
+        ]);
+        $suspended = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'name' => 'Suspended Customer', 'username' => 'bulk-suspended',
+            'password' => 'password', 'status' => 'suspended',
+            'expires_at' => today()->addMonth(),
+        ]);
+
+        Http::fake(function (Request $request) {
+            if ($request->method() === 'GET') {
+                return Http::response([]);
+            }
+
+            return Http::response(['.id' => '*1']);
+        });
+
+        $this->actingAs($user)->post(route('customers.sync-all'), [
+            'router_id' => $router->id,
+            'status' => 'active',
+        ])->assertRedirect(route('customers.index', [
+            'status' => 'active',
+            'router_id' => $router->id,
+        ]))->assertSessionHas('success', 'Bulk sync complete — 1 of 1 customers synced with MikroTik.');
+
+        $this->assertNotNull($active->fresh()->last_synced_at);
+        $this->assertNull($suspended->fresh()->last_synced_at);
+        Http::assertSentCount(4);
+    }
+
     public function test_admin_can_import_a_jaze_all_users_csv_with_automatic_package_mapping(): void
     {
         $user = User::factory()->create();
