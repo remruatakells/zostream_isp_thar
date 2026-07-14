@@ -118,7 +118,11 @@ class MikroTikService
             ]),
         );
         $existing = collect($secrets)->firstWhere('name', $customer->username);
-        $disabled = $customer->status !== 'active' || ($customer->expires_at && $customer->expires_at->lt(today()));
+        $expired = $customer->expires_at && $customer->expires_at->lt(today());
+        if ($expired && $customer->status === 'active') {
+            $customer->forceFill(['status' => 'suspended'])->save();
+        }
+        $disabled = $customer->status !== 'active' || $expired;
         $payload = [
             'name' => $customer->username,
             'password' => $customer->password,

@@ -161,6 +161,13 @@ class CustomerController extends Controller
 
     public function toggle(Customer $customer, MikroTikService $mikrotik): RedirectResponse
     {
+        if ($customer->status === 'suspended' && $customer->expires_at?->lt(today())) {
+            return redirect()->route('customers.index')->with(
+                'warning',
+                'This customer is expired. Record a payment/renewal or move the expiry date before activating PPPoE.'
+            );
+        }
+
         $customer->update(['status' => $customer->status === 'active' ? 'suspended' : 'active']);
 
         return $this->syncAndRedirect($customer, $mikrotik, ucfirst($customer->status));

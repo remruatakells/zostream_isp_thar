@@ -349,6 +349,57 @@ class AdminPanelTest extends TestCase
         );
     }
 
+    public function test_sync_changes_an_expired_active_customer_to_suspended_in_admin_and_mikrotik(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Expired Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Expired Package', 'mikrotik_profile' => 'expired-profile',
+            'rate_limit' => '10M/10M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $customer = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'name' => 'Expired Active Customer', 'username' => 'expired-active',
+            'password' => 'password', 'status' => 'active',
+            'expires_at' => today()->subDay(),
+        ]);
+
+        Http::fake(function (Request $request) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
+                return Http::response([['.id' => '*1', 'name' => 'expired-profile']]);
+            }
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
+                return Http::response([['.id' => '*2', 'name' => 'expired-active']]);
+            }
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/active')) {
+                return Http::response([]);
+            }
+
+            return Http::response([]);
+        });
+
+        $this->actingAs($user)->post(route('customers.sync', $customer))
+            ->assertRedirect(route('customers.index'));
+
+        $this->assertSame('suspended', $customer->fresh()->status);
+        Http::assertSent(fn (Request $request) => $request->method() === 'PATCH'
+            && str_contains($request->url(), '/rest/ppp/secret/')
+            && ($request->data()['disabled'] ?? null) === 'true'
+        );
+
+        Http::fake();
+        $this->actingAs($user)->post(route('customers.toggle', $customer->fresh()))
+            ->assertRedirect(route('customers.index'))
+            ->assertSessionHas('warning', 'This customer is expired. Record a payment/renewal or move the expiry date before activating PPPoE.');
+        $this->assertSame('suspended', $customer->fresh()->status);
+        Http::assertNothingSent();
+    }
+
     public function test_payment_renewal_activates_and_syncs_the_customer(): void
     {
         $user = User::factory()->create();
