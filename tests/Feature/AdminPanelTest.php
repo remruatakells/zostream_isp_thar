@@ -187,6 +187,15 @@ class AdminPanelTest extends TestCase
             'password' => 'password', 'status' => 'suspended',
             'expires_at' => today()->addMonth(),
         ]);
+        $lastActive = null;
+        foreach (range(2, 9) as $number) {
+            $lastActive = Customer::create([
+                'router_id' => $router->id, 'package_id' => $package->id,
+                'name' => "Active Customer {$number}", 'username' => "bulk-active-{$number}",
+                'password' => 'password', 'status' => 'active',
+                'expires_at' => today()->addMonth(),
+            ]);
+        }
 
         Http::fake(function (Request $request) {
             if ($request->method() === 'GET') {
@@ -196,17 +205,36 @@ class AdminPanelTest extends TestCase
             return Http::response(['.id' => '*1']);
         });
 
-        $this->actingAs($user)->post(route('customers.sync-all'), [
+        $firstBatch = $this->actingAs($user)->postJson(route('customers.sync-all'), [
             'router_id' => $router->id,
             'status' => 'active',
-        ])->assertRedirect(route('customers.index', [
-            'status' => 'active',
+            'after_id' => 0,
+            'synced_total' => 0,
+            'failed_total' => 0,
+        ])->assertOk()
+            ->assertJsonPath('total', 9)
+            ->assertJsonPath('processed', 8)
+            ->assertJsonPath('synced_total', 8)
+            ->assertJsonPath('failed_total', 0)
+            ->assertJsonPath('has_more', true);
+
+        $this->actingAs($user)->postJson(route('customers.sync-all'), [
             'router_id' => $router->id,
-        ]))->assertSessionHas('success', 'Bulk sync complete — 1 of 1 customers synced with MikroTik.');
+            'status' => 'active',
+            'after_id' => $firstBatch->json('next_after_id'),
+            'synced_total' => 8,
+            'failed_total' => 0,
+        ])->assertOk()
+            ->assertJsonPath('total', 9)
+            ->assertJsonPath('processed', 9)
+            ->assertJsonPath('synced_total', 9)
+            ->assertJsonPath('failed_total', 0)
+            ->assertJsonPath('has_more', false);
 
         $this->assertNotNull($active->fresh()->last_synced_at);
+        $this->assertNotNull($lastActive->fresh()->last_synced_at);
         $this->assertNull($suspended->fresh()->last_synced_at);
-        Http::assertSentCount(4);
+        Http::assertSentCount(22);
     }
 
     public function test_admin_can_import_a_jaze_all_users_csv_with_automatic_package_mapping(): void
