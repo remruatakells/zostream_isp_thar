@@ -4,7 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Customer;
 use App\Models\Payment;
-use App\Services\MikroTikService;
+use App\Services\RadiusService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\View\View;
@@ -21,7 +21,7 @@ class PaymentController extends Controller
         ]);
     }
 
-    public function store(Request $request, MikroTikService $mikrotik): RedirectResponse
+    public function store(Request $request, RadiusService $radius): RedirectResponse
     {
         $data = $request->validate([
             'customer_id' => ['required', 'exists:customers,id'],
@@ -41,7 +41,7 @@ class PaymentController extends Controller
             $base = $customer->expires_at && $customer->expires_at->isFuture() ? $customer->expires_at : today();
             $customer->update(['expires_at' => $base->copy()->addDays($customer->package?->validity_days ?? 30), 'status' => 'active']);
             try {
-                $mikrotik->syncCustomer($customer);
+                $radius->syncCustomer($customer);
             } catch (Throwable $e) {
                 report($e);
                 $syncError = $e->getMessage();
@@ -49,11 +49,11 @@ class PaymentController extends Controller
         }
 
         if ($syncError) {
-            return back()->with('warning', 'Payment was recorded and the customer renewed locally, but MikroTik sync failed: '.$syncError.' Use the customer Sync action to retry; do not record the payment again.');
+            return back()->with('warning', 'Payment was recorded and the customer renewed locally, but RADIUS sync failed: '.$syncError.' Use the customer Sync action to retry; do not record the payment again.');
         }
 
         $message = $request->boolean('renew')
-            ? 'Payment recorded; customer renewed and synced with MikroTik.'
+            ? 'Payment recorded; customer renewed and synced with RADIUS.'
             : 'Payment recorded successfully.';
 
         return back()->with('success', $message);

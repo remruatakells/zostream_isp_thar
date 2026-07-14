@@ -10,6 +10,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
@@ -85,6 +86,7 @@ class AdminPanelTest extends TestCase
         $this->actingAs($user)->post('/routers', [
             'name' => 'Main Router', 'host' => '192.168.88.1', 'port' => 443,
             'username' => 'isp-panel', 'password' => 'router-secret',
+            'radius_secret' => 'unique-radius-secret-001', 'radius_enabled' => '1',
             'use_ssl' => '1', 'verify_ssl' => '1', 'is_active' => '1',
         ])->assertRedirect('/routers');
 
@@ -96,6 +98,10 @@ class AdminPanelTest extends TestCase
 
         $this->assertDatabaseHas('routers', ['name' => 'Main Router']);
         $this->assertSame('router-secret', Router::first()->password);
+        $this->assertSame('unique-radius-secret-001', Router::first()->radius_secret);
+        $this->assertDatabaseHas('nas', [
+            'nasname' => '192.168.88.1', 'secret' => 'unique-radius-secret-001',
+        ]);
         $this->assertDatabaseHas('packages', ['mikrotik_profile' => 'home-20m']);
     }
 
@@ -234,10 +240,16 @@ class AdminPanelTest extends TestCase
         $this->assertNotNull($active->fresh()->last_synced_at);
         $this->assertNotNull($lastActive->fresh()->last_synced_at);
         $this->assertNull($suspended->fresh()->last_synced_at);
-        Http::assertSentCount(22);
+        $this->assertDatabaseHas('radcheck', [
+            'username' => 'bulk-active', 'attribute' => 'Cleartext-Password', 'value' => 'password',
+        ]);
+        $this->assertDatabaseHas('radreply', [
+            'username' => 'bulk-active', 'attribute' => 'Mikrotik-Rate-Limit', 'value' => '10M/10M',
+        ]);
+        Http::assertNothingSent();
     }
 
-    public function test_admin_delete_removes_the_mikrotik_secret_before_deleting_the_customer(): void
+    public function test_admin_delete_removes_radius_credentials_and_deletes_the_customer(): void
     {
         $user = User::factory()->create();
         $router = Router::create([
@@ -255,10 +267,16 @@ class AdminPanelTest extends TestCase
             'name' => 'Delete Customer', 'username' => 'delete-user',
             'password' => 'password', 'status' => 'active',
         ]);
+        DB::table('radcheck')->insert([
+            'username' => 'delete-user', 'attribute' => 'Cleartext-Password', 'op' => ':=', 'value' => 'password',
+        ]);
+        DB::table('radreply')->insert([
+            'username' => 'delete-user', 'attribute' => 'Mikrotik-Rate-Limit', 'op' => ':=', 'value' => '10M/10M',
+        ]);
 
         Http::fake(function (Request $request) {
-            if ($request->method() === 'GET') {
-                return Http::response([['.id' => '*9', 'name' => 'delete-user']]);
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/active')) {
+                return Http::response([]);
             }
 
             return Http::response([]);
@@ -266,15 +284,14 @@ class AdminPanelTest extends TestCase
 
         $this->actingAs($user)->delete(route('customers.destroy', $customer))
             ->assertRedirect()
-            ->assertSessionHas('success', 'Customer deleted from the admin panel and MikroTik PPP Secrets.');
+            ->assertSessionHas('success', 'Customer deleted from the admin panel and RADIUS.');
 
         $this->assertDatabaseMissing('customers', ['id' => $customer->id]);
-        Http::assertSent(fn (Request $request) => $request->method() === 'DELETE'
-            && str_contains($request->url(), '/rest/ppp/secret/%2A9')
-        );
+        $this->assertDatabaseMissing('radcheck', ['username' => 'delete-user']);
+        $this->assertDatabaseMissing('radreply', ['username' => 'delete-user']);
     }
 
-    public function test_admin_delete_keeps_the_customer_when_mikrotik_cleanup_fails(): void
+    public function test_admin_delete_still_removes_radius_customer_when_router_is_offline(): void
     {
         $user = User::factory()->create();
         $router = Router::create([
@@ -296,12 +313,12 @@ class AdminPanelTest extends TestCase
 
         $this->actingAs($user)->delete(route('customers.destroy', $customer))
             ->assertRedirect()
-            ->assertSessionHas('error');
+            ->assertSessionHas('success');
 
-        $this->assertDatabaseHas('customers', ['id' => $customer->id]);
+        $this->assertDatabaseMissing('customers', ['id' => $customer->id]);
     }
 
-    public function test_suspend_disables_the_secret_and_disconnects_an_active_ppp_session(): void
+    public function test_suspend_rejects_radius_login_and_disconnects_an_active_ppp_session(): void
     {
         $user = User::factory()->create();
         $router = Router::create([
@@ -322,12 +339,6 @@ class AdminPanelTest extends TestCase
         ]);
 
         Http::fake(function (Request $request) {
-            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
-                return Http::response([['.id' => '*1', 'name' => 'suspend-profile']]);
-            }
-            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
-                return Http::response([['.id' => '*2', 'name' => 'online-user']]);
-            }
             if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/active')) {
                 return Http::response([['.id' => '*3', 'name' => 'online-user']]);
             }
@@ -337,19 +348,19 @@ class AdminPanelTest extends TestCase
 
         $this->actingAs($user)->post(route('customers.toggle', $customer))
             ->assertRedirect(route('customers.index'))
-            ->assertSessionHas('success', 'Suspended and synced with MikroTik.');
+            ->assertSessionHas('success', 'Suspended and synced with RADIUS.');
 
         $this->assertSame('suspended', $customer->fresh()->status);
-        Http::assertSent(fn (Request $request) => $request->method() === 'PATCH'
-            && str_contains($request->url(), '/rest/ppp/secret/')
-            && ($request->data()['disabled'] ?? null) === 'true'
-        );
+        $this->assertDatabaseHas('radcheck', [
+            'username' => 'online-user', 'attribute' => 'Auth-Type', 'value' => 'Reject',
+        ]);
+        $this->assertDatabaseMissing('radreply', ['username' => 'online-user']);
         Http::assertSent(fn (Request $request) => $request->method() === 'DELETE'
             && str_contains($request->url(), '/rest/ppp/active/%2A3')
         );
     }
 
-    public function test_sync_changes_an_expired_active_customer_to_suspended_in_admin_and_mikrotik(): void
+    public function test_sync_changes_an_expired_active_customer_to_suspended_in_admin_and_radius(): void
     {
         $user = User::factory()->create();
         $router = Router::create([
@@ -370,12 +381,6 @@ class AdminPanelTest extends TestCase
         ]);
 
         Http::fake(function (Request $request) {
-            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
-                return Http::response([['.id' => '*1', 'name' => 'expired-profile']]);
-            }
-            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
-                return Http::response([['.id' => '*2', 'name' => 'expired-active']]);
-            }
             if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/active')) {
                 return Http::response([]);
             }
@@ -387,10 +392,9 @@ class AdminPanelTest extends TestCase
             ->assertRedirect(route('customers.index'));
 
         $this->assertSame('suspended', $customer->fresh()->status);
-        Http::assertSent(fn (Request $request) => $request->method() === 'PATCH'
-            && str_contains($request->url(), '/rest/ppp/secret/')
-            && ($request->data()['disabled'] ?? null) === 'true'
-        );
+        $this->assertDatabaseHas('radcheck', [
+            'username' => 'expired-active', 'attribute' => 'Auth-Type', 'value' => 'Reject',
+        ]);
 
         Http::fake();
         $this->actingAs($user)->post(route('customers.toggle', $customer->fresh()))
@@ -438,16 +442,15 @@ class AdminPanelTest extends TestCase
             'paid_at' => now()->format('Y-m-d H:i:s'),
             'renew' => '1',
         ])->assertRedirect()
-            ->assertSessionHas('success', 'Payment recorded; customer renewed and synced with MikroTik.');
+            ->assertSessionHas('success', 'Payment recorded; customer renewed and synced with RADIUS.');
 
         $customer->refresh();
         $this->assertSame('active', $customer->status);
         $this->assertSame(today()->addDays(30)->toDateString(), $customer->expires_at->toDateString());
         $this->assertDatabaseHas('payments', ['customer_id' => $customer->id, 'amount' => 500]);
-        Http::assertSent(fn (Request $request) => $request->method() === 'PATCH'
-            && str_contains($request->url(), '/rest/ppp/secret/')
-            && ($request->data()['disabled'] ?? null) === 'false'
-        );
+        $this->assertDatabaseHas('radcheck', [
+            'username' => 'renew-user', 'attribute' => 'Cleartext-Password', 'value' => 'password',
+        ]);
     }
 
     public function test_admin_can_import_a_jaze_all_users_csv_with_automatic_package_mapping(): void
@@ -600,7 +603,7 @@ class AdminPanelTest extends TestCase
             ->assertOk()->assertJsonPath('data.customers', 0);
     }
 
-    public function test_customer_sync_creates_the_package_profile_before_the_ppp_secret(): void
+    public function test_customer_sync_writes_radius_password_and_package_speed(): void
     {
         $user = User::factory()->create();
         $router = Router::create([
@@ -622,22 +625,7 @@ class AdminPanelTest extends TestCase
             'is_active' => true,
         ]);
 
-        Http::fake(function (Request $request) {
-            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
-                return Http::response([]);
-            }
-            if ($request->method() === 'PUT' && str_ends_with($request->url(), '/rest/ppp/profile')) {
-                return Http::response(['.id' => '*1']);
-            }
-            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
-                return Http::response([]);
-            }
-            if ($request->method() === 'PUT' && str_ends_with($request->url(), '/rest/ppp/secret')) {
-                return Http::response(['.id' => '*2']);
-            }
-
-            return Http::response([], 404);
-        });
+        Http::fake();
 
         $this->actingAs($user)->post('/customers', [
             'router_id' => $router->id,
@@ -649,24 +637,23 @@ class AdminPanelTest extends TestCase
             'status' => 'active',
             'expires_at' => now()->addMonth()->toDateString(),
         ])->assertRedirect('/customers')
-            ->assertSessionHas('success', 'Customer created and synced with MikroTik.');
-
-        $requests = Http::recorded();
-        $this->assertCount(4, $requests);
-        $this->assertSame('.id,name', $requests[0][0]->data()['.proplist']);
-        $this->assertStringEndsWith('/rest/ppp/profile', $requests[1][0]->url());
-        $this->assertSame('PUT', $requests[1][0]->method());
-        $this->assertSame('family-30m', $requests[1][0]['name']);
-        $this->assertSame('.id,name', $requests[2][0]->data()['.proplist']);
-        $this->assertStringEndsWith('/rest/ppp/secret', $requests[3][0]->url());
-        $this->assertSame('family-30m', $requests[3][0]['profile']);
+            ->assertSessionHas('success', 'Customer created and synced with RADIUS.');
 
         $customer = Customer::firstOrFail();
-        $this->assertSame('*2', $customer->mikrotik_id);
+        $this->assertNull($customer->mikrotik_id);
         $this->assertNotNull($customer->last_synced_at);
+        $this->assertDatabaseHas('radcheck', [
+            'username' => 'TEST1USER', 'attribute' => 'Cleartext-Password',
+            'op' => ':=', 'value' => 'customer-secret',
+        ]);
+        $this->assertDatabaseHas('radreply', [
+            'username' => 'TEST1USER', 'attribute' => 'Mikrotik-Rate-Limit',
+            'op' => ':=', 'value' => '30M/30M',
+        ]);
+        Http::assertNothingSent();
     }
 
-    public function test_customer_sync_does_not_update_an_existing_ppp_profile(): void
+    public function test_customer_resync_replaces_radius_credentials_without_duplicate_rows(): void
     {
         $user = User::factory()->create();
         $router = Router::create([
@@ -688,19 +675,7 @@ class AdminPanelTest extends TestCase
             'is_active' => true,
         ]);
 
-        Http::fake(function (Request $request) {
-            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
-                return Http::response([['.id' => '*1', 'name' => 'starter-10m']]);
-            }
-            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
-                return Http::response([['.id' => '*2', 'name' => 'TESTUSER1']]);
-            }
-            if ($request->method() === 'PATCH' && str_contains($request->url(), '/rest/ppp/secret/')) {
-                return Http::response(['.id' => '*2']);
-            }
-
-            return Http::response([], 500);
-        });
+        Http::fake();
 
         $this->actingAs($user)->post('/customers', [
             'router_id' => $router->id,
@@ -712,19 +687,20 @@ class AdminPanelTest extends TestCase
             'status' => 'active',
             'expires_at' => now()->addMonth()->toDateString(),
         ])->assertRedirect('/customers')
-            ->assertSessionHas('success', 'Customer created and synced with MikroTik.');
+            ->assertSessionHas('success', 'Customer created and synced with RADIUS.');
 
-        Http::assertSentCount(3);
-        Http::assertNotSent(fn (Request $request) => $request->method() === 'PATCH' && str_contains($request->url(), '/rest/ppp/profile/')
-        );
-        Http::assertSent(fn (Request $request) => $request->method() === 'PATCH'
-            && str_contains($request->url(), '/rest/ppp/secret/')
-            && ! array_key_exists('name', $request->data())
-            && ($request->data()['profile'] ?? null) === 'starter-10m'
-        );
+        $customer = Customer::firstOrFail();
+        $customer->update(['password' => 'changed-secret']);
+        $this->actingAs($user)->post(route('customers.sync', $customer))
+            ->assertSessionHas('success');
+
+        $this->assertSame(1, DB::table('radcheck')->where('username', 'TESTUSER1')->count());
+        $this->assertSame(2, DB::table('radreply')->where('username', 'TESTUSER1')->count());
+        $this->assertDatabaseHas('radcheck', ['username' => 'TESTUSER1', 'value' => 'changed-secret']);
+        Http::assertNothingSent();
     }
 
-    public function test_the_same_pppoe_username_can_exist_on_different_routers_only(): void
+    public function test_radius_username_must_be_unique_across_all_routers(): void
     {
         $user = User::factory()->create();
         $routerOne = Router::create([
@@ -743,16 +719,7 @@ class AdminPanelTest extends TestCase
             'validity_days' => 30, 'is_active' => true,
         ]);
 
-        Http::fake(function (Request $request) {
-            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
-                return Http::response([['.id' => '*1', 'name' => 'starter']]);
-            }
-            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
-                return Http::response([]);
-            }
-
-            return Http::response(['.id' => '*2']);
-        });
+        Http::fake();
 
         $payload = [
             'package_id' => $package->id,
@@ -766,12 +733,12 @@ class AdminPanelTest extends TestCase
         $this->actingAs($user)->post('/customers', $payload + ['router_id' => $routerOne->id])
             ->assertSessionHasNoErrors();
         $this->actingAs($user)->post('/customers', $payload + ['router_id' => $routerTwo->id])
-            ->assertSessionHasNoErrors();
+            ->assertSessionHasErrors('username');
 
-        $this->assertDatabaseCount('customers', 2);
+        $this->assertDatabaseCount('customers', 1);
         $this->actingAs($user)->post('/customers', $payload + ['router_id' => $routerOne->id])
             ->assertSessionHasErrors('username');
-        $this->assertDatabaseCount('customers', 2);
+        $this->assertDatabaseCount('customers', 1);
     }
 
     public function test_package_sync_can_target_one_router(): void

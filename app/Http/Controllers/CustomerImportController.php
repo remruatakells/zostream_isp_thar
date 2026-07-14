@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Customer;
 use App\Models\Package;
 use App\Models\Router;
-use App\Services\MikroTikService;
+use App\Services\RadiusService;
 use Carbon\Carbon;
 use DateTimeInterface;
 use Illuminate\Http\RedirectResponse;
@@ -73,7 +73,7 @@ class CustomerImportController extends Controller
         ]);
     }
 
-    public function store(Request $request, MikroTikService $mikrotik): RedirectResponse
+    public function store(Request $request, RadiusService $radius): RedirectResponse
     {
         $data = $request->validate([
             'router_id' => [
@@ -173,9 +173,14 @@ class CustomerImportController extends Controller
                 continue;
             }
 
-            $customer = Customer::where('router_id', $router->id)
-                ->where('username', $customerData['username'])
-                ->first();
+            $customer = Customer::where('username', $customerData['username'])->first();
+
+            if ($customer && $customer->router_id !== $router->id) {
+                $skipped++;
+                $errors[] = "Row {$excelRow}: {$customerData['username']} belongs to another router. RADIUS usernames must be globally unique.";
+
+                continue;
+            }
 
             if ($customer && $data['duplicate_action'] === 'skip') {
                 $skipped++;
@@ -194,12 +199,12 @@ class CustomerImportController extends Controller
 
             if ($request->boolean('sync_to_mikrotik')) {
                 try {
-                    $mikrotik->syncCustomer($customer);
+                    $radius->syncCustomer($customer);
                     $synced++;
                 } catch (Throwable $e) {
                     report($e);
                     $syncFailed++;
-                    $errors[] = "Row {$excelRow}: imported locally, but MikroTik sync failed for {$customer->username}: {$e->getMessage()}";
+                    $errors[] = "Row {$excelRow}: imported locally, but RADIUS sync failed for {$customer->username}: {$e->getMessage()}";
                 }
             }
         }
@@ -314,6 +319,9 @@ class CustomerImportController extends Controller
         $password = (string) ($row['password'] ?? '');
         if ($username === '') {
             throw new \InvalidArgumentException('username is required.');
+        }
+        if (mb_strlen($username) > 64) {
+            throw new \InvalidArgumentException('username must not exceed 64 characters for RADIUS.');
         }
         if ($password === '') {
             throw new \InvalidArgumentException('password is required.');

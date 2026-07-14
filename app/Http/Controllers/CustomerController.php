@@ -5,7 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Customer;
 use App\Models\Package;
 use App\Models\Router;
-use App\Services\MikroTikService;
+use App\Services\RadiusService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -33,11 +33,11 @@ class CustomerController extends Controller
         return view('customers.form', ['customer' => new Customer, 'routers' => Router::where('is_active', true)->get(), 'packages' => Package::where('is_active', true)->get()]);
     }
 
-    public function store(Request $request, MikroTikService $mikrotik): RedirectResponse
+    public function store(Request $request, RadiusService $radius): RedirectResponse
     {
         $customer = Customer::create($this->validated($request));
 
-        return $this->syncAndRedirect($customer, $mikrotik, 'Customer created');
+        return $this->syncAndRedirect($customer, $radius, 'Customer created');
     }
 
     public function edit(Customer $customer): View
@@ -45,7 +45,7 @@ class CustomerController extends Controller
         return view('customers.form', ['customer' => $customer, 'routers' => Router::where('is_active', true)->get(), 'packages' => Package::where('is_active', true)->get()]);
     }
 
-    public function update(Request $request, Customer $customer, MikroTikService $mikrotik): RedirectResponse
+    public function update(Request $request, Customer $customer, RadiusService $radius): RedirectResponse
     {
         $data = $this->validated($request, $customer);
         if (blank($data['password'] ?? null)) {
@@ -53,33 +53,38 @@ class CustomerController extends Controller
         }
         $customer->update($data);
 
-        return $this->syncAndRedirect($customer, $mikrotik, 'Customer updated');
+        return $this->syncAndRedirect($customer, $radius, 'Customer updated');
     }
 
-    public function destroy(Customer $customer, MikroTikService $mikrotik): RedirectResponse
+    public function destroy(Customer $customer, RadiusService $radius): RedirectResponse
     {
         try {
-            $removedFromMikroTik = $mikrotik->deleteCustomer($customer);
+            $removed = $radius->deleteCustomer($customer);
+            try {
+                $radius->disconnect($customer);
+            } catch (Throwable $e) {
+                report($e);
+            }
             $customer->delete();
 
-            $message = $removedFromMikroTik
-                ? 'Customer deleted from the admin panel and MikroTik PPP Secrets.'
-                : 'Customer deleted from the admin panel; no matching MikroTik PPP Secret existed.';
+            $message = $removed
+                ? 'Customer deleted from the admin panel and RADIUS.'
+                : 'Customer deleted from the admin panel; no matching RADIUS credentials existed.';
 
             return back()->with('success', $message);
         } catch (Throwable $e) {
             report($e);
 
-            return back()->with('error', 'Customer was not deleted because MikroTik cleanup failed: '.$e->getMessage());
+            return back()->with('error', 'Customer was not deleted because RADIUS cleanup failed: '.$e->getMessage());
         }
     }
 
-    public function sync(Customer $customer, MikroTikService $mikrotik): RedirectResponse
+    public function sync(Customer $customer, RadiusService $radius): RedirectResponse
     {
-        return $this->syncAndRedirect($customer, $mikrotik, 'Customer');
+        return $this->syncAndRedirect($customer, $radius, 'Customer');
     }
 
-    public function syncAll(Request $request, MikroTikService $mikrotik): RedirectResponse|JsonResponse
+    public function syncAll(Request $request, RadiusService $radius): RedirectResponse|JsonResponse
     {
         $request->validate([
             'search' => ['nullable', 'string', 'max:150'],
@@ -105,26 +110,9 @@ class CustomerController extends Controller
         $synced = 0;
         $failed = 0;
         $errors = [];
-        $preparedProfiles = [];
-
         foreach ($customers as $customer) {
             try {
-                if ($customer->package) {
-                    $profileKey = $customer->router_id.':'.$customer->package_id;
-                    if (! array_key_exists($profileKey, $preparedProfiles)) {
-                        try {
-                            $mikrotik->ensurePackageProfileExists($customer->router, $customer->package);
-                            $preparedProfiles[$profileKey] = true;
-                        } catch (Throwable $e) {
-                            $preparedProfiles[$profileKey] = $e->getMessage();
-                        }
-                    }
-                    if ($preparedProfiles[$profileKey] !== true) {
-                        throw new \RuntimeException('Package profile sync failed: '.$preparedProfiles[$profileKey]);
-                    }
-                }
-
-                $mikrotik->syncCustomer($customer, ensureProfile: false);
+                $radius->syncCustomer($customer);
                 $synced++;
             } catch (Throwable $e) {
                 report($e);
@@ -159,7 +147,7 @@ class CustomerController extends Controller
         ]);
     }
 
-    public function toggle(Customer $customer, MikroTikService $mikrotik): RedirectResponse
+    public function toggle(Customer $customer, RadiusService $radius): RedirectResponse
     {
         if ($customer->status === 'suspended' && $customer->expires_at?->lt(today())) {
             return redirect()->route('customers.index')->with(
@@ -170,19 +158,19 @@ class CustomerController extends Controller
 
         $customer->update(['status' => $customer->status === 'active' ? 'suspended' : 'active']);
 
-        return $this->syncAndRedirect($customer, $mikrotik, ucfirst($customer->status));
+        return $this->syncAndRedirect($customer, $radius, ucfirst($customer->status));
     }
 
-    private function syncAndRedirect(Customer $customer, MikroTikService $mikrotik, string $message): RedirectResponse
+    private function syncAndRedirect(Customer $customer, RadiusService $radius, string $message): RedirectResponse
     {
         try {
-            $mikrotik->syncCustomer($customer);
+            $radius->syncCustomer($customer);
 
-            return redirect()->route('customers.index')->with('success', $message.' and synced with MikroTik.');
+            return redirect()->route('customers.index')->with('success', $message.' and synced with RADIUS.');
         } catch (Throwable $e) {
             report($e);
 
-            return redirect()->route('customers.index')->with('warning', $message.' locally, but MikroTik sync failed: '.$e->getMessage());
+            return redirect()->route('customers.index')->with('warning', $message.' locally, but RADIUS sync failed: '.$e->getMessage());
         }
     }
 
@@ -212,10 +200,8 @@ class CustomerController extends Controller
             'username' => [
                 'required',
                 'string',
-                'max:100',
-                Rule::unique('customers')->where(
-                    fn ($query) => $query->where('router_id', $request->integer('router_id'))
-                )->ignore($customer),
+                'max:64',
+                Rule::unique('customers', 'username')->ignore($customer),
             ],
             'password' => [$customer ? 'nullable' : 'required', 'string', 'max:255'],
             'status' => ['required', Rule::in(['active', 'suspended'])],

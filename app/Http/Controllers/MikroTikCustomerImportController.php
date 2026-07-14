@@ -64,6 +64,13 @@ class MikroTikCustomerImportController extends Controller
             if ($username === '') {
                 $skipped++;
                 $errors[] = 'Secret '.($index + 1).': missing username; skipped.';
+
+                continue;
+            }
+            if (mb_strlen($username) > 64) {
+                $skipped++;
+                $errors[] = "{$username}: username exceeds the RADIUS 64-character limit.";
+
                 continue;
             }
 
@@ -71,17 +78,24 @@ class MikroTikCustomerImportController extends Controller
             $passwordVisible = $password !== '' && ! preg_match('/^\*+$/', $password);
             $profile = Str::lower(trim((string) ($secret['profile'] ?? 'default')));
             $package = $packagesByProfile->get($profile, $fallbackPackage);
-            $customer = Customer::where('router_id', $router->id)
-                ->where('username', $username)
-                ->first();
+            $customer = Customer::where('username', $username)->first();
+
+            if ($customer && $customer->router_id !== $router->id) {
+                $skipped++;
+                $errors[] = "{$username}: already belongs to another router; RADIUS usernames must be globally unique.";
+
+                continue;
+            }
 
             if ($customer && $data['duplicate_action'] === 'skip') {
                 $skipped++;
+
                 continue;
             }
             if (! $customer && ! $passwordVisible) {
                 $skipped++;
                 $errors[] = "{$username}: password is hidden. Add sensitive policy to the REST user, then import again.";
+
                 continue;
             }
 
@@ -101,6 +115,7 @@ class MikroTikCustomerImportController extends Controller
             if ($customer) {
                 $customer->update($attributes);
                 $updated++;
+
                 continue;
             }
 

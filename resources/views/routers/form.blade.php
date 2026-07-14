@@ -9,10 +9,12 @@
     <label>REST API port<input type="number" name="port" value="{{ old('port', $router->port ?: 443) }}" required></label>
     <label>API username<input name="username" value="{{ old('username', $router->username) }}" required autocomplete="off" placeholder="isp-panel"></label>
     <label class="full">API password<input type="password" name="password" {{ $router->exists ? '' : 'required' }} autocomplete="new-password" placeholder="{{ $router->exists ? 'Leave blank to keep the current password' : 'Strong router API password' }}"></label>
+    <label class="full">RADIUS shared secret<input type="password" name="radius_secret" autocomplete="new-password" placeholder="{{ $router->exists ? 'Leave blank to keep the current shared secret' : 'Use a unique random secret of at least 16 characters' }}"></label>
+    <label class="check"><input type="checkbox" name="radius_enabled" value="1" @checked(old('radius_enabled', $router->exists ? $router->radius_enabled : true))> Enable RADIUS for this router</label>
     <label class="check"><input type="checkbox" name="use_ssl" value="1" @checked(old('use_ssl', $router->exists ? $router->use_ssl : true))> Use HTTPS</label>
     <label class="check"><input type="checkbox" name="verify_ssl" value="1" @checked(old('verify_ssl', $router->exists ? $router->verify_ssl : true))> Verify TLS certificate</label>
     <label class="check"><input type="checkbox" name="is_active" value="1" @checked(old('is_active', $router->exists ? $router->is_active : true))> Router is active</label>
-    <p class="form-help full">For a self-signed test certificate, TLS verification may be disabled temporarily. Import a trusted certificate before production.</p>
+    <p class="form-help full">The Router IP must be the WireGuard address from which RADIUS packets originate, for example 10.77.0.2. Configure the exact same shared secret in Winbox → RADIUS. For a self-signed REST certificate, TLS verification may be disabled temporarily.</p>
     <div class="form-actions"><a class="button secondary" href="{{ route('routers.index') }}">Cancel</a><button class="button primary">Save router</button></div>
 </form>
 @endsection

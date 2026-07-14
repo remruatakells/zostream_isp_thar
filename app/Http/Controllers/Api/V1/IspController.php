@@ -8,6 +8,7 @@ use App\Models\Package;
 use App\Models\Payment;
 use App\Models\Router;
 use App\Services\MikroTikService;
+use App\Services\RadiusService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -30,16 +31,16 @@ class IspController extends Controller
         return response()->json(Customer::with(['router:id,name,host', 'package:id,name,rate_limit,price'])->latest()->paginate(50));
     }
 
-    public function storeCustomer(Request $request, MikroTikService $mikrotik): JsonResponse
+    public function storeCustomer(Request $request, RadiusService $radius): JsonResponse
     {
         $data = $request->validate($this->customerRules($request));
         $customer = Customer::create($data);
-        $mikrotik->syncCustomer($customer);
+        $radius->syncCustomer($customer);
 
         return response()->json(['data' => $customer->fresh(['router', 'package'])], 201);
     }
 
-    public function updateCustomer(Request $request, Customer $customer, MikroTikService $mikrotik): JsonResponse
+    public function updateCustomer(Request $request, Customer $customer, RadiusService $radius): JsonResponse
     {
         $rules = $this->customerRules($request, $customer);
         $rules['password'] = ['nullable', 'string', 'max:255'];
@@ -48,22 +49,22 @@ class IspController extends Controller
             unset($data['password']);
         }
         $customer->update($data);
-        $mikrotik->syncCustomer($customer);
+        $radius->syncCustomer($customer);
 
         return response()->json(['data' => $customer->fresh(['router', 'package'])]);
     }
 
-    public function syncCustomer(Customer $customer, MikroTikService $mikrotik): JsonResponse
+    public function syncCustomer(Customer $customer, RadiusService $radius): JsonResponse
     {
-        $mikrotik->syncCustomer($customer);
+        $radius->syncCustomer($customer);
 
         return response()->json(['message' => 'Customer synced.', 'data' => $customer->fresh()]);
     }
 
-    public function toggleCustomer(Customer $customer, MikroTikService $mikrotik): JsonResponse
+    public function toggleCustomer(Customer $customer, RadiusService $radius): JsonResponse
     {
         $customer->update(['status' => $customer->status === 'active' ? 'suspended' : 'active']);
-        $mikrotik->syncCustomer($customer);
+        $radius->syncCustomer($customer);
 
         return response()->json(['message' => 'Customer '.$customer->status.'.', 'data' => $customer]);
     }
@@ -98,10 +99,8 @@ class IspController extends Controller
             'username' => [
                 'required',
                 'string',
-                'max:100',
-                Rule::unique('customers')->where(
-                    fn ($query) => $query->where('router_id', $request->integer('router_id'))
-                )->ignore($customer),
+                'max:64',
+                Rule::unique('customers', 'username')->ignore($customer),
             ],
             'password' => ['required', 'string', 'max:255'],
             'status' => ['required', Rule::in(['active', 'suspended'])],
