@@ -56,11 +56,22 @@ class CustomerController extends Controller
         return $this->syncAndRedirect($customer, $mikrotik, 'Customer updated');
     }
 
-    public function destroy(Customer $customer): RedirectResponse
+    public function destroy(Customer $customer, MikroTikService $mikrotik): RedirectResponse
     {
-        $customer->delete();
+        try {
+            $removedFromMikroTik = $mikrotik->deleteCustomer($customer);
+            $customer->delete();
 
-        return back()->with('success', 'Customer removed from the panel. MikroTik secret was not deleted.');
+            $message = $removedFromMikroTik
+                ? 'Customer deleted from the admin panel and MikroTik PPP Secrets.'
+                : 'Customer deleted from the admin panel; no matching MikroTik PPP Secret existed.';
+
+            return back()->with('success', $message);
+        } catch (Throwable $e) {
+            report($e);
+
+            return back()->with('error', 'Customer was not deleted because MikroTik cleanup failed: '.$e->getMessage());
+        }
     }
 
     public function sync(Customer $customer, MikroTikService $mikrotik): RedirectResponse

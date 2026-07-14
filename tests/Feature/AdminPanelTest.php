@@ -237,6 +237,168 @@ class AdminPanelTest extends TestCase
         Http::assertSentCount(22);
     }
 
+    public function test_admin_delete_removes_the_mikrotik_secret_before_deleting_the_customer(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Delete Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Delete Package', 'mikrotik_profile' => 'delete-profile',
+            'rate_limit' => '10M/10M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $customer = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'name' => 'Delete Customer', 'username' => 'delete-user',
+            'password' => 'password', 'status' => 'active',
+        ]);
+
+        Http::fake(function (Request $request) {
+            if ($request->method() === 'GET') {
+                return Http::response([['.id' => '*9', 'name' => 'delete-user']]);
+            }
+
+            return Http::response([]);
+        });
+
+        $this->actingAs($user)->delete(route('customers.destroy', $customer))
+            ->assertRedirect()
+            ->assertSessionHas('success', 'Customer deleted from the admin panel and MikroTik PPP Secrets.');
+
+        $this->assertDatabaseMissing('customers', ['id' => $customer->id]);
+        Http::assertSent(fn (Request $request) => $request->method() === 'DELETE'
+            && str_contains($request->url(), '/rest/ppp/secret/%2A9')
+        );
+    }
+
+    public function test_admin_delete_keeps_the_customer_when_mikrotik_cleanup_fails(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Offline Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Delete Package', 'mikrotik_profile' => 'delete-profile',
+            'rate_limit' => '10M/10M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $customer = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'name' => 'Preserved Customer', 'username' => 'preserved-user',
+            'password' => 'password', 'status' => 'active',
+        ]);
+        Http::fake(['*' => Http::response(['message' => 'failure'], 500)]);
+
+        $this->actingAs($user)->delete(route('customers.destroy', $customer))
+            ->assertRedirect()
+            ->assertSessionHas('error');
+
+        $this->assertDatabaseHas('customers', ['id' => $customer->id]);
+    }
+
+    public function test_suspend_disables_the_secret_and_disconnects_an_active_ppp_session(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Suspend Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Suspend Package', 'mikrotik_profile' => 'suspend-profile',
+            'rate_limit' => '10M/10M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $customer = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'name' => 'Online Customer', 'username' => 'online-user',
+            'password' => 'password', 'status' => 'active',
+            'expires_at' => today()->addMonth(),
+        ]);
+
+        Http::fake(function (Request $request) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
+                return Http::response([['.id' => '*1', 'name' => 'suspend-profile']]);
+            }
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
+                return Http::response([['.id' => '*2', 'name' => 'online-user']]);
+            }
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/active')) {
+                return Http::response([['.id' => '*3', 'name' => 'online-user']]);
+            }
+
+            return Http::response([]);
+        });
+
+        $this->actingAs($user)->post(route('customers.toggle', $customer))
+            ->assertRedirect(route('customers.index'))
+            ->assertSessionHas('success', 'Suspended and synced with MikroTik.');
+
+        $this->assertSame('suspended', $customer->fresh()->status);
+        Http::assertSent(fn (Request $request) => $request->method() === 'PATCH'
+            && str_contains($request->url(), '/rest/ppp/secret/')
+            && ($request->data()['disabled'] ?? null) === 'true'
+        );
+        Http::assertSent(fn (Request $request) => $request->method() === 'DELETE'
+            && str_contains($request->url(), '/rest/ppp/active/%2A3')
+        );
+    }
+
+    public function test_payment_renewal_activates_and_syncs_the_customer(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Renew Router', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Renew Package', 'mikrotik_profile' => 'renew-profile',
+            'rate_limit' => '10M/10M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $customer = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'name' => 'Expired Customer', 'username' => 'renew-user',
+            'password' => 'password', 'status' => 'suspended',
+            'expires_at' => today()->subDay(),
+        ]);
+
+        Http::fake(function (Request $request) {
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
+                return Http::response([['.id' => '*1', 'name' => 'renew-profile']]);
+            }
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/secret')) {
+                return Http::response([['.id' => '*2', 'name' => 'renew-user']]);
+            }
+
+            return Http::response([]);
+        });
+
+        $this->actingAs($user)->post(route('payments.store'), [
+            'customer_id' => $customer->id,
+            'amount' => 500,
+            'method' => 'cash',
+            'paid_at' => now()->format('Y-m-d H:i:s'),
+            'renew' => '1',
+        ])->assertRedirect()
+            ->assertSessionHas('success', 'Payment recorded; customer renewed and synced with MikroTik.');
+
+        $customer->refresh();
+        $this->assertSame('active', $customer->status);
+        $this->assertSame(today()->addDays(30)->toDateString(), $customer->expires_at->toDateString());
+        $this->assertDatabaseHas('payments', ['customer_id' => $customer->id, 'amount' => 500]);
+        Http::assertSent(fn (Request $request) => $request->method() === 'PATCH'
+            && str_contains($request->url(), '/rest/ppp/secret/')
+            && ($request->data()['disabled'] ?? null) === 'false'
+        );
+    }
+
     public function test_admin_can_import_a_jaze_all_users_csv_with_automatic_package_mapping(): void
     {
         $user = User::factory()->create();

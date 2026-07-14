@@ -147,7 +147,57 @@ class MikroTikService
 
         $customer->forceFill(['mikrotik_id' => $mikrotikId, 'last_synced_at' => now()])->save();
 
+        if ($disabled) {
+            $this->disconnectPppUser($customer->router, $customer->username);
+        }
+
         return $result;
+    }
+
+    public function deleteCustomer(Customer $customer): bool
+    {
+        $customer->loadMissing('router');
+        $secrets = $this->request(
+            'PPP secret lookup for deletion',
+            fn () => $this->client($customer->router)->get('/ppp/secret', [
+                'name' => $customer->username,
+                '.proplist' => '.id,name',
+            ]),
+        );
+        $existing = collect($secrets)->firstWhere('name', $customer->username);
+        $removed = (bool) ($existing && isset($existing['.id']));
+        if ($removed) {
+            $this->request(
+                'PPP secret deletion',
+                fn () => $this->client($customer->router)
+                    ->delete('/ppp/secret/'.rawurlencode($existing['.id'])),
+            );
+        }
+
+        $this->disconnectPppUser($customer->router, $customer->username);
+
+        return $removed;
+    }
+
+    public function disconnectPppUser(Router $router, string $username): int
+    {
+        $sessions = $this->request(
+            'PPP active session lookup',
+            fn () => $this->client($router)->get('/ppp/active', [
+                'name' => $username,
+                '.proplist' => '.id,name',
+            ]),
+        );
+        $matching = collect($sessions)->where('name', $username)->filter(fn ($session) => isset($session['.id']));
+
+        foreach ($matching as $session) {
+            $this->request(
+                'PPP active session disconnect',
+                fn () => $this->client($router)->delete('/ppp/active/'.rawurlencode($session['.id'])),
+            );
+        }
+
+        return $matching->count();
     }
 
     public function ensurePackageProfileExists(Router $router, Package $package): void

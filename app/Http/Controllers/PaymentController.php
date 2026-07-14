@@ -34,6 +34,7 @@ class PaymentController extends Controller
         ]);
         unset($data['renew']);
         $payment = Payment::create($data);
+        $syncError = null;
 
         if ($request->boolean('renew')) {
             $customer = $payment->customer()->with(['package', 'router'])->first();
@@ -43,10 +44,19 @@ class PaymentController extends Controller
                 $mikrotik->syncCustomer($customer);
             } catch (Throwable $e) {
                 report($e);
+                $syncError = $e->getMessage();
             }
         }
 
-        return back()->with('success', 'Payment recorded successfully.');
+        if ($syncError) {
+            return back()->with('warning', 'Payment was recorded and the customer renewed locally, but MikroTik sync failed: '.$syncError.' Use the customer Sync action to retry; do not record the payment again.');
+        }
+
+        $message = $request->boolean('renew')
+            ? 'Payment recorded; customer renewed and synced with MikroTik.'
+            : 'Payment recorded successfully.';
+
+        return back()->with('success', $message);
     }
 
     public function destroy(Payment $payment): RedirectResponse

@@ -13,7 +13,11 @@
         <label>Router<select name="router_id" required><option value="">Choose router</option>@foreach($routers as $router)<option value="{{ $router->id }}" @selected(old('router_id') == $router->id)>{{ $router->name }}</option>@endforeach</select></label>
     @endif
     <label>Package<select name="package_id" required><option value="">Choose package</option>@foreach($packages as $package)<option value="{{ $package->id }}" @selected(old('package_id', $customer->package_id) == $package->id)>{{ $package->name }} · ₹{{ number_format($package->price, 0) }}</option>@endforeach</select></label>
-    <label>PPPoE username<input name="username" value="{{ old('username', $customer->username) }}" required autocomplete="off" placeholder="customer001"></label>
+    @if($customer->exists)
+        <label>PPPoE username<input value="{{ $customer->username }}" disabled><input type="hidden" name="username" value="{{ $customer->username }}"><small class="form-help">The PPPoE identity is locked to prevent an orphan secret on MikroTik. Delete and recreate the customer to change it.</small></label>
+    @else
+        <label>PPPoE username<input name="username" value="{{ old('username', $customer->username) }}" required autocomplete="off" placeholder="customer001"></label>
+    @endif
     <label>PPPoE password<input type="password" name="password" {{ $customer->exists ? '' : 'required' }} autocomplete="new-password" placeholder="{{ $customer->exists ? 'Leave blank to keep current password' : 'PPPoE password' }}"></label>
     <label>Status<select name="status"><option value="active" @selected(old('status', $customer->status ?: 'active') === 'active')>Active</option><option value="suspended" @selected(old('status', $customer->status) === 'suspended')>Suspended</option></select></label>
     <label>Expiry date<input type="date" name="expires_at" value="{{ old('expires_at', $customer->expires_at?->format('Y-m-d')) }}"></label>
