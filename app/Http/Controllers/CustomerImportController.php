@@ -10,6 +10,7 @@ use Carbon\Carbon;
 use DateTimeInterface;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
@@ -89,15 +90,16 @@ class CustomerImportController extends Controller
         ]);
 
         try {
-            $reader = IOFactory::createReaderForFile($request->file('file')->getRealPath());
-            $reader->setReadDataOnly(true);
-            $spreadsheet = $reader->load($request->file('file')->getRealPath());
-            $rows = $spreadsheet->getActiveSheet()->toArray(null, false, false, false);
-            $spreadsheet->disconnectWorksheets();
+            $rows = $this->readRows($request->file('file'));
         } catch (Throwable $e) {
             report($e);
 
-            return back()->withInput()->withErrors(['file' => 'The spreadsheet could not be read. Confirm that it is a valid Excel or CSV file.']);
+            $message = in_array(strtolower($request->file('file')->getClientOriginalExtension()), ['xlsx', 'xls'], true)
+                && ! class_exists(IOFactory::class)
+                ? 'Excel support is not installed on this server. Run composer install, or upload a CSV file instead.'
+                : 'The spreadsheet could not be read. Confirm that it is a valid Excel or CSV file.';
+
+            return back()->withInput()->withErrors(['file' => $message]);
         }
 
         if (count($rows) < 2) {
@@ -215,6 +217,17 @@ class CustomerImportController extends Controller
 
     public function template(): StreamedResponse
     {
+        if (! class_exists(Spreadsheet::class)) {
+            return response()->streamDownload(function (): void {
+                $output = fopen('php://output', 'wb');
+                fputcsv($output, ['name', 'phone', 'address', 'username', 'password', 'status', 'expires_at'], ',', '"', '');
+                fputcsv($output, ['Sample Customer', '9876543210', 'Locality / address', 'customer001', 'ChangeMe123', 'active', now()->addMonth()->format('Y-m-d')], ',', '"', '');
+                fclose($output);
+            }, 'zostream-customer-import-template.csv', [
+                'Content-Type' => 'text/csv; charset=UTF-8',
+            ]);
+        }
+
         $spreadsheet = new Spreadsheet;
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Customers');
@@ -243,6 +256,44 @@ class CustomerImportController extends Controller
 
             return self::HEADER_ALIASES[$normalized] ?? null;
         }, $headers);
+    }
+
+    private function readRows(UploadedFile $file): array
+    {
+        if (strtolower($file->getClientOriginalExtension()) !== 'csv') {
+            if (! class_exists(IOFactory::class)) {
+                throw new \RuntimeException('PhpSpreadsheet is required for Excel files.');
+            }
+
+            $reader = IOFactory::createReaderForFile($file->getRealPath());
+            $reader->setReadDataOnly(true);
+            $spreadsheet = $reader->load($file->getRealPath());
+
+            try {
+                return $spreadsheet->getActiveSheet()->toArray(null, false, false, false);
+            } finally {
+                $spreadsheet->disconnectWorksheets();
+            }
+        }
+
+        $handle = fopen($file->getRealPath(), 'rb');
+        if ($handle === false) {
+            throw new \RuntimeException('The CSV file could not be opened.');
+        }
+
+        try {
+            $rows = [];
+            while (($row = fgetcsv($handle, null, ',', '"', '')) !== false) {
+                if ($rows === [] && isset($row[0])) {
+                    $row[0] = preg_replace('/^\xEF\xBB\xBF/', '', (string) $row[0]);
+                }
+                $rows[] = $row;
+            }
+
+            return $rows;
+        } finally {
+            fclose($handle);
+        }
     }
 
     private function associateRow(array $headers, array $values): array
