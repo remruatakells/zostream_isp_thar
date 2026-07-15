@@ -6,12 +6,14 @@ use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\Package;
 use App\Models\Router;
+use App\Services\MikroTikService;
 use App\Services\RadiusService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -20,9 +22,10 @@ use Throwable;
 
 class CustomerController extends Controller
 {
-    public function index(Request $request): View
+    public function index(Request $request, MikroTikService $mikrotik): View
     {
-        $customers = $this->filteredQuery($request)
+        $liveStatusIds = $this->liveStatusIds($request, $mikrotik);
+        $customers = $this->filteredQuery($request, $liveStatusIds)
             ->with(['router', 'package', 'branch'])
             ->orderBy('username')->paginate(15)->withQueryString();
         $this->attachAccountingUsage($customers->getCollection());
@@ -108,11 +111,11 @@ class CustomerController extends Controller
         return $this->syncAndRedirect($customer, $radius, 'Customer');
     }
 
-    public function syncAll(Request $request, RadiusService $radius): RedirectResponse|JsonResponse
+    public function syncAll(Request $request, RadiusService $radius, MikroTikService $mikrotik): RedirectResponse|JsonResponse
     {
         $request->validate([
             'search' => ['nullable', 'string', 'max:150'],
-            'status' => ['nullable', Rule::in(['active', 'suspended'])],
+            'status' => ['nullable', Rule::in(['active', 'suspended', 'online', 'offline', 'expired', 'unknown'])],
             'router_id' => ['nullable', 'exists:routers,id'],
             'branch_id' => ['nullable', 'exists:branches,id'],
             'after_id' => ['nullable', 'integer', 'min:0'],
@@ -124,7 +127,7 @@ class CustomerController extends Controller
             return back()->with('warning', 'Bulk sync uses short background batches to prevent a gateway timeout. Refresh this page and click Sync all again.');
         }
 
-        $query = $this->filteredQuery($request);
+        $query = $this->filteredQuery($request, $this->liveStatusIds($request, $mikrotik));
         $total = (clone $query)->count();
         $afterId = $request->integer('after_id');
         $customers = (clone $query)->with(['router', 'package', 'branch'])
@@ -226,7 +229,19 @@ class CustomerController extends Controller
         return $candidate;
     }
 
-    private function filteredQuery(Request $request): Builder
+    private function filteredQuery(Request $request, array $liveStatusIds = []): Builder
+    {
+        return $this->baseCustomerQuery($request)
+            ->when($request->input('status') === 'active', fn ($q) => $q
+                ->where('status', 'active')
+                ->where(fn ($q) => $q->whereNull('expires_at')->orWhereDate('expires_at', '>=', today())))
+            ->when($request->input('status') === 'suspended', fn ($q) => $q->where('status', 'suspended'))
+            ->when($request->input('status') === 'expired', fn ($q) => $q->whereDate('expires_at', '<', today()))
+            ->when(in_array($request->input('status'), ['online', 'offline', 'unknown'], true), fn ($q) => $q
+                ->whereIn('id', $liveStatusIds[$request->input('status')] ?? []));
+    }
+
+    private function baseCustomerQuery(Request $request): Builder
     {
         return Customer::query()
             ->when($request->filled('search'), fn ($q) => $q->where(fn ($q) => $q
@@ -235,9 +250,50 @@ class CustomerController extends Controller
                 ->orWhere('phone', 'like', '%'.$request->string('search').'%')
                 ->orWhereHas('branch', fn ($branch) => $branch
                     ->where('name', 'like', '%'.$request->string('search').'%'))))
-            ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('router_id'), fn ($q) => $q->where('router_id', $request->integer('router_id')))
             ->when($request->filled('branch_id'), fn ($q) => $q->where('branch_id', $request->integer('branch_id')));
+    }
+
+    private function liveStatusIds(Request $request, MikroTikService $mikrotik): array
+    {
+        if (! in_array($request->input('status'), ['online', 'offline', 'unknown'], true)) {
+            return [];
+        }
+
+        $candidates = $this->baseCustomerQuery($request)
+            ->where('status', 'active')
+            ->where(fn ($query) => $query->whereNull('expires_at')->orWhereDate('expires_at', '>=', today()))
+            ->with('router')
+            ->get(['id', 'router_id', 'username']);
+        $ids = ['online' => [], 'offline' => [], 'unknown' => []];
+
+        foreach ($candidates->groupBy('router_id') as $routerCustomers) {
+            $router = $routerCustomers->first()->router;
+            if (! $router?->is_active) {
+                array_push($ids['unknown'], ...$routerCustomers->pluck('id')->all());
+                continue;
+            }
+
+            try {
+                $sessions = Cache::remember(
+                    "dashboard.router.{$router->id}.ppp-active",
+                    now()->addSeconds(20),
+                    fn () => $mikrotik->activePppUsers($router),
+                );
+                $activeNames = collect($sessions)->pluck('name')->filter()
+                    ->map(fn ($name) => mb_strtolower((string) $name));
+
+                foreach ($routerCustomers as $customer) {
+                    $status = $activeNames->contains(mb_strtolower($customer->username)) ? 'online' : 'offline';
+                    $ids[$status][] = $customer->id;
+                }
+            } catch (Throwable $e) {
+                report($e);
+                array_push($ids['unknown'], ...$routerCustomers->pluck('id')->all());
+            }
+        }
+
+        return $ids;
     }
 
     private function attachAccountingUsage($customers): void

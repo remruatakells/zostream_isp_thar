@@ -345,6 +345,44 @@ class AdminPanelTest extends TestCase
             ->assertDontSee('No Branch Customer');
     }
 
+    public function test_admin_can_filter_customers_by_online_offline_expired_and_suspended_status(): void
+    {
+        Cache::flush();
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Status Filter Router', 'host' => '10.77.0.9', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Status Filter Package', 'mikrotik_profile' => 'status-filter',
+            'rate_limit' => '30M/30M', 'price' => 550,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        foreach ([
+            ['name' => 'Filter Online', 'username' => 'filter-online', 'status' => 'active', 'expires_at' => today()->addMonth()],
+            ['name' => 'Filter Offline', 'username' => 'filter-offline', 'status' => 'active', 'expires_at' => today()->addMonth()],
+            ['name' => 'Filter Expired', 'username' => 'filter-expired', 'status' => 'suspended', 'expires_at' => today()->subDay()],
+            ['name' => 'Filter Suspended', 'username' => 'filter-suspended', 'status' => 'suspended', 'expires_at' => today()->addMonth()],
+        ] as $attributes) {
+            Customer::create($attributes + [
+                'router_id' => $router->id, 'package_id' => $package->id, 'password' => 'password',
+            ]);
+        }
+        Http::fake([
+            '*/rest/ppp/active*' => Http::response([['.id' => '*9', 'name' => 'filter-online']]),
+        ]);
+
+        $this->actingAs($user)->get(route('customers.index', ['status' => 'online']))
+            ->assertOk()->assertSee('Filter Online')->assertDontSee('Filter Offline');
+        $this->actingAs($user)->get(route('customers.index', ['status' => 'offline']))
+            ->assertOk()->assertSee('Filter Offline')->assertDontSee('Filter Online');
+        $this->actingAs($user)->get(route('customers.index', ['status' => 'expired']))
+            ->assertOk()->assertSee('Filter Expired')->assertDontSee('Filter Suspended');
+        $this->actingAs($user)->get(route('customers.index', ['status' => 'suspended']))
+            ->assertOk()->assertSee('Filter Suspended')->assertSee('Filter Expired')->assertDontSee('Filter Online');
+    }
+
     public function test_customer_list_shows_accounting_usage_scoped_to_its_router(): void
     {
         $user = User::factory()->create();
