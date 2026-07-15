@@ -308,6 +308,59 @@ class AdminPanelTest extends TestCase
             ->assertDontSee('Offline Customer');
     }
 
+    public function test_customer_edit_returns_to_the_same_filtered_list_and_page(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Filtered Router', 'host' => '10.77.0.3', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Filtered Package', 'mikrotik_profile' => 'filtered-package',
+            'rate_limit' => '30M/30M', 'price' => 550,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $customer = Customer::create([
+            'router_id' => $router->id,
+            'package_id' => $package->id,
+            'name' => 'Before Edit',
+            'username' => 'filtered-edit-user',
+            'password' => 'password',
+            'status' => 'active',
+            'expires_at' => today()->addMonth(),
+        ]);
+        $filteredUrl = route('customers.index', [
+            'search' => 'filtered',
+            'router_id' => $router->id,
+            'connection_port' => 'ether1',
+            'status' => 'active',
+            'page' => 3,
+        ]);
+
+        $this->actingAs($user)->get(route('customers.edit', [
+            'customer' => $customer,
+            'return_to' => $filteredUrl,
+        ]))->assertOk()
+            ->assertSee('name="return_to"', false)
+            ->assertSee(e($filteredUrl), false);
+
+        $this->actingAs($user)->put(route('customers.update', $customer), [
+            'router_id' => $router->id,
+            'package_id' => $package->id,
+            'name' => 'After Edit',
+            'phone' => '9876543210',
+            'username' => $customer->username,
+            'password' => '',
+            'status' => 'active',
+            'expires_at' => today()->addMonth()->toDateString(),
+            'return_to' => $filteredUrl,
+        ])->assertRedirect($filteredUrl)
+            ->assertSessionHas('success', 'Customer updated and synced with RADIUS.');
+
+        $this->assertSame('After Edit', $customer->fresh()->name);
+    }
+
     public function test_admin_delete_removes_radius_credentials_and_deletes_the_customer(): void
     {
         $user = User::factory()->create();

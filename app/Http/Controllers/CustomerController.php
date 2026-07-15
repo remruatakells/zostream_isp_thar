@@ -11,6 +11,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Throwable;
@@ -67,9 +68,14 @@ class CustomerController extends Controller
         return $this->syncAndRedirect($customer, $radius, 'Customer created');
     }
 
-    public function edit(Customer $customer): View
+    public function edit(Request $request, Customer $customer): View
     {
-        return view('customers.form', ['customer' => $customer, 'routers' => Router::where('is_active', true)->get(), 'packages' => Package::where('is_active', true)->get()]);
+        return view('customers.form', [
+            'customer' => $customer,
+            'routers' => Router::where('is_active', true)->get(),
+            'packages' => Package::where('is_active', true)->get(),
+            'returnTo' => $this->customerIndexReturnUrl($request),
+        ]);
     }
 
     public function update(Request $request, Customer $customer, RadiusService $radius): RedirectResponse
@@ -80,7 +86,12 @@ class CustomerController extends Controller
         }
         $customer->update($data);
 
-        return $this->syncAndRedirect($customer, $radius, 'Customer updated');
+        return $this->syncAndRedirect(
+            $customer,
+            $radius,
+            'Customer updated',
+            $this->customerIndexReturnUrl($request),
+        );
     }
 
     public function destroy(Customer $customer, RadiusService $radius): RedirectResponse
@@ -189,17 +200,44 @@ class CustomerController extends Controller
         return $this->syncAndRedirect($customer, $radius, ucfirst($customer->status));
     }
 
-    private function syncAndRedirect(Customer $customer, RadiusService $radius, string $message): RedirectResponse
+    private function syncAndRedirect(
+        Customer $customer,
+        RadiusService $radius,
+        string $message,
+        ?string $redirectTo = null,
+    ): RedirectResponse
     {
+        $redirectTo ??= route('customers.index');
+
         try {
             $radius->syncCustomer($customer);
 
-            return redirect()->route('customers.index')->with('success', $message.' and synced with RADIUS.');
+            return redirect()->to($redirectTo)->with('success', $message.' and synced with RADIUS.');
         } catch (Throwable $e) {
             report($e);
 
-            return redirect()->route('customers.index')->with('warning', $message.' locally, but RADIUS sync failed: '.$e->getMessage());
+            return redirect()->to($redirectTo)->with('warning', $message.' locally, but RADIUS sync failed: '.$e->getMessage());
         }
+    }
+
+    private function customerIndexReturnUrl(Request $request): string
+    {
+        $fallback = route('customers.index');
+        $candidate = trim((string) $request->input('return_to', ''));
+        if ($candidate === '') {
+            return $fallback;
+        }
+
+        $parts = parse_url($candidate);
+        $customerIndexPath = parse_url($fallback, PHP_URL_PATH);
+        if ($parts === false || ($parts['path'] ?? '') !== $customerIndexPath) {
+            return $fallback;
+        }
+        if (isset($parts['host']) && ! hash_equals(Str::lower($request->getHost()), Str::lower($parts['host']))) {
+            return $fallback;
+        }
+
+        return $candidate;
     }
 
     private function filteredQuery(Request $request): Builder

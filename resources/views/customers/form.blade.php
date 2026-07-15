@@ -5,6 +5,7 @@
 <div class="page-actions"><div><h2>{{ $customer->exists ? $customer->name : 'New PPPoE subscriber' }}</h2><p>Saving will also create or update the MikroTik PPP secret.</p></div></div>
 @if($routers->isEmpty() || $packages->isEmpty())<div class="alert warning">You need at least one active router and one active package before adding a customer.</div>@endif
 <form class="form-card form-grid" method="POST" action="{{ $customer->exists ? route('customers.update', $customer) : route('customers.store') }}">@csrf @if($customer->exists) @method('PUT') @endif
+    @if($customer->exists)<input type="hidden" name="return_to" value="{{ old('return_to', $returnTo ?? route('customers.index')) }}">@endif
     <label>Full name<input name="name" value="{{ old('name', $customer->name) }}" required placeholder="Customer name"></label>
     <label>Phone<input name="phone" value="{{ old('phone', $customer->phone) }}" placeholder="+91..."></label>
     @if($customer->exists)
@@ -22,6 +23,6 @@
     <label>Status<select name="status"><option value="active" @selected(old('status', $customer->status ?: 'active') === 'active')>Active</option><option value="suspended" @selected(old('status', $customer->status) === 'suspended')>Suspended</option></select></label>
     <label>Expiry date<input type="date" name="expires_at" value="{{ old('expires_at', $customer->expires_at?->format('Y-m-d')) }}"></label>
     <label class="full">Installation address<textarea name="address" placeholder="House, locality, landmark">{{ old('address', $customer->address) }}</textarea></label>
-    <div class="form-actions"><a class="button secondary" href="{{ route('customers.index') }}">Cancel</a><button class="button primary" @disabled($routers->isEmpty() || $packages->isEmpty())>Save & sync</button></div>
+    <div class="form-actions"><a class="button secondary" href="{{ $customer->exists ? ($returnTo ?? route('customers.index')) : route('customers.index') }}">Cancel</a><button class="button primary" @disabled($routers->isEmpty() || $packages->isEmpty())>Save & sync</button></div>
 </form>
 @endsection
