@@ -24,7 +24,7 @@
         </nav>
         <div class="sidebar-foot">
             <div class="user-chip"><span>{{ strtoupper(substr(auth()->user()->name, 0, 1)) }}</span><div class="user-details"><strong>{{ auth()->user()->name }}</strong><small>{{ auth()->user()->email }}</small></div></div>
-            <form method="POST" action="{{ route('logout') }}">@csrf<button class="logout-button" type="submit" title="Sign out"><span class="logout-icon">↪</span><span class="logout-label">Sign out</span></button></form>
+            <form method="POST" action="{{ route('logout') }}">@csrf<button class="logout-button" type="submit" title="Sign out"><span class="logout-icon" aria-hidden="true">⏻</span><span class="logout-label">Sign out</span></button></form>
         </div>
     </aside>
     <div class="backdrop" id="backdrop"></div>
