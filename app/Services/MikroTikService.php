@@ -85,7 +85,7 @@ class MikroTikService
             return $this->request(
                 'PPP profile update',
                 fn () => $this->client($router)
-                    ->patch('/ppp/profile/'.rawurlencode($existing['.id']), $updatePayload),
+                    ->patch($this->resourcePath('/ppp/profile', $existing['.id']), $updatePayload),
             );
         }
 
@@ -138,7 +138,7 @@ class MikroTikService
             $result = $this->request(
                 'PPP secret update',
                 fn () => $this->client($customer->router)
-                    ->patch('/ppp/secret/'.rawurlencode($existing['.id']), $updatePayload),
+                    ->patch($this->resourcePath('/ppp/secret', $existing['.id']), $updatePayload),
             );
             $mikrotikId = $existing['.id'];
         } else {
@@ -174,7 +174,7 @@ class MikroTikService
             $this->request(
                 'PPP secret deletion',
                 fn () => $this->client($customer->router)
-                    ->delete('/ppp/secret/'.rawurlencode($existing['.id'])),
+                    ->delete($this->resourcePath('/ppp/secret', $existing['.id'])),
             );
         }
 
@@ -197,11 +197,24 @@ class MikroTikService
         foreach ($matching as $session) {
             $this->request(
                 'PPP active session disconnect',
-                fn () => $this->client($router)->delete('/ppp/active/'.rawurlencode($session['.id'])),
+                fn () => $this->client($router)
+                    ->delete($this->resourcePath('/ppp/active', $session['.id'])),
             );
         }
 
         return $matching->count();
+    }
+
+    private function resourcePath(string $menu, mixed $id): string
+    {
+        $id = (string) $id;
+        if (! preg_match('/^\*[0-9A-F]+$/i', $id)) {
+            throw new RuntimeException("RouterOS returned an invalid resource identifier: {$id}");
+        }
+
+        // RouterOS REST expects its internal ID literally (for example *3).
+        // Encoding the asterisk as %2A causes RouterOS to reject the resource.
+        return rtrim($menu, '/').'/'.$id;
     }
 
     public function ensurePackageProfileExists(Router $router, Package $package): void

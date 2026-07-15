@@ -558,7 +558,7 @@ class AdminPanelTest extends TestCase
         ]);
         $this->assertDatabaseMissing('radreply', ['username' => 'online-user']);
         Http::assertSent(fn (Request $request) => $request->method() === 'DELETE'
-            && str_contains($request->url(), '/rest/ppp/active/%2A3')
+            && str_contains($request->url(), '/rest/ppp/active/*3')
         );
     }
 
