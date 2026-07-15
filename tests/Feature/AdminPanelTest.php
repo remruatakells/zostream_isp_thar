@@ -33,7 +33,10 @@ class AdminPanelTest extends TestCase
         $this->post('/login', ['email' => $user->email, 'password' => 'secret-password'])
             ->assertRedirect('/dashboard');
 
-        $this->get('/dashboard')->assertOk()->assertSee('Your ISP, at a glance');
+        $this->get('/dashboard')->assertOk()
+            ->assertSee('Your ISP, at a glance')
+            ->assertSee('aria-controls="sidebar"', false)
+            ->assertSee('nav-label', false);
     }
 
     public function test_dashboard_shows_live_offline_and_expired_customer_details(): void
