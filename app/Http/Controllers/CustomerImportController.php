@@ -10,6 +10,7 @@ use DateTimeInterface;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
@@ -62,6 +63,18 @@ class CustomerImportController extends Controller
         'expiration_time' => 'expires_at',
         'group_name' => 'package_group',
         'sub_plan' => 'package_reference',
+        'start_time' => 'session_started_at',
+        'online_time' => 'session_online_time',
+        'download' => 'session_download',
+        'upload' => 'session_upload',
+        'ipaddress' => 'session_ip_address',
+        'mac' => 'session_mac_address',
+        'nas_ip' => 'session_nas_ip',
+        'server_name' => 'session_server_name',
+        'nas_port_id' => 'session_nas_port_id',
+        'sessionid' => 'session_id',
+        'protocol' => 'session_protocol',
+        'protocal' => 'session_protocol',
     ];
 
     public function create(): View
@@ -105,12 +118,25 @@ class CustomerImportController extends Controller
         }
 
         $headers = $this->mapHeaders(array_shift($rows));
-        foreach (['username', 'password'] as $requiredHeader) {
+        $isSessionHistoryImport = in_array('session_id', $headers, true)
+            && in_array('session_nas_port_id', $headers, true);
+        $requiredHeaders = $isSessionHistoryImport ? ['username'] : ['username', 'password'];
+        foreach ($requiredHeaders as $requiredHeader) {
             if (! in_array($requiredHeader, $headers, true)) {
                 return back()->withInput()->withErrors([
                     'file' => "Missing required column: {$requiredHeader}. Download the template and keep its header row.",
                 ]);
             }
+        }
+
+        $router = Router::findOrFail($data['router_id']);
+        if ($isSessionHistoryImport) {
+            return $this->importSessionHistory(
+                $rows,
+                $headers,
+                $router,
+                $data['duplicate_action'],
+            );
         }
 
         $isJazeImport = in_array('package_reference', $headers, true)
@@ -121,7 +147,6 @@ class CustomerImportController extends Controller
             ]);
         }
 
-        $router = Router::findOrFail($data['router_id']);
         $packages = Package::where('is_active', true)->get();
         if ($isJazeImport) {
             $requiredProfiles = collect($rows)
@@ -408,5 +433,169 @@ class CustomerImportController extends Controller
         $label = $reference !== '' ? "Sub_plan '{$reference}'" : "Group_name '{$group}'";
 
         throw new \InvalidArgumentException("no active admin package matches {$label}. Set the package MikroTik profile to the exact Jaze Sub_plan value.");
+    }
+
+    private function importSessionHistory(array $rows, array $headers, Router $router, string $duplicateAction): RedirectResponse
+    {
+        $routerUsernames = Customer::where('router_id', $router->id)->pluck('username');
+        DB::table('radacct')
+            ->where('class', 'jaze-session-import')
+            ->whereNull('acctstoptime')
+            ->whereIn('username', $routerUsernames)
+            ->update(['acctstoptime' => now(), 'acctupdatetime' => now()]);
+
+        $imported = 0;
+        $updated = 0;
+        $skipped = 0;
+        $errors = [];
+
+        foreach ($rows as $index => $values) {
+            $csvRow = $index + 2;
+            if ($csvRow > self::MAX_ROWS + 1) {
+                $errors[] = 'Import stopped after '.self::MAX_ROWS.' data rows.';
+                break;
+            }
+
+            $row = $this->associateRow($headers, $values);
+            if (collect($row)->filter(fn ($value) => filled($value))->isEmpty()) {
+                continue;
+            }
+
+            $username = trim((string) ($row['username'] ?? ''));
+            $sessionId = trim((string) ($row['session_id'] ?? ''));
+            $nasPortId = trim((string) ($row['session_nas_port_id'] ?? ''));
+            if ($username === '' || $sessionId === '' || $nasPortId === '') {
+                $skipped++;
+                $errors[] = "Row {$csvRow}: Username, SessionId and Nas Port Id are required.";
+                continue;
+            }
+
+            $customer = Customer::where('username', $username)->first();
+            if (! $customer) {
+                $skipped++;
+                $errors[] = "Row {$csvRow}: {$username} is not in the admin database. Import Jaze All Users first because session history has no password.";
+                continue;
+            }
+            if ($customer->router_id !== $router->id) {
+                $skipped++;
+                $errors[] = "Row {$csvRow}: {$username} belongs to another router; skipped.";
+                continue;
+            }
+
+            if ($duplicateAction === 'update') {
+                $customerChanges = [];
+                if (filled($row['name'] ?? null)) {
+                    $customerChanges['name'] = trim((string) $row['name']);
+                }
+                if (filled($row['phone'] ?? null)) {
+                    $customerChanges['phone'] = preg_replace('/\s+/', '', trim((string) $row['phone']));
+                }
+                if ($customerChanges !== []) {
+                    $customer->update($customerChanges);
+                    $updated++;
+                }
+            }
+
+            try {
+                $startedAt = $this->parseSessionStart($row['session_started_at'] ?? null);
+                $sessionSeconds = $this->parseSessionDuration($row['session_online_time'] ?? null);
+                $nasIp = trim((string) ($row['session_nas_ip'] ?? '')) ?: $router->host;
+                $uniqueId = md5('jaze|'.$nasIp.'|'.$sessionId.'|'.$username);
+
+                DB::table('radacct')->updateOrInsert(
+                    ['acctuniqueid' => $uniqueId],
+                    [
+                        'acctsessionid' => $sessionId,
+                        'username' => $username,
+                        'realm' => null,
+                        'nasipaddress' => $nasIp,
+                        'nasportid' => $nasPortId,
+                        'nasporttype' => 'Ethernet',
+                        'acctstarttime' => $startedAt,
+                        'acctupdatetime' => now(),
+                        'acctstoptime' => null,
+                        'acctinterval' => 300,
+                        'acctsessiontime' => $sessionSeconds,
+                        'acctauthentic' => 'RADIUS',
+                        'acctinputoctets' => $this->parseTrafficBytes($row['session_upload'] ?? null),
+                        'acctoutputoctets' => $this->parseTrafficBytes($row['session_download'] ?? null),
+                        'calledstationid' => trim((string) ($row['session_server_name'] ?? '')) ?: null,
+                        'callingstationid' => trim((string) ($row['session_mac_address'] ?? '')) ?: null,
+                        'servicetype' => 'Framed-User',
+                        'framedprotocol' => Str::upper(trim((string) ($row['session_protocol'] ?? ''))) === 'PPPOE' ? 'PPP' : null,
+                        'framedipaddress' => trim((string) ($row['session_ip_address'] ?? '')) ?: null,
+                        'class' => 'jaze-session-import',
+                    ],
+                );
+                $imported++;
+            } catch (Throwable $e) {
+                $skipped++;
+                $errors[] = "Row {$csvRow}: {$e->getMessage()}";
+            }
+        }
+
+        $summary = "Session history import complete — {$imported} sessions imported, {$updated} customers updated, {$skipped} skipped.";
+
+        return redirect()->route('customers.import.create')
+            ->with($errors ? 'warning' : 'success', $summary)
+            ->with('import_errors', array_slice($errors, 0, 50));
+    }
+
+    private function parseSessionStart(mixed $value): string
+    {
+        $value = trim((string) $value);
+        foreach (['d/m/Y H:i:s', 'd/m/Y H:i', 'Y-m-d H:i:s'] as $format) {
+            try {
+                $date = Carbon::createFromFormat('!'.$format, $value);
+                if ($date && $date->format($format) === $value) {
+                    return $date->toDateTimeString();
+                }
+            } catch (Throwable) {
+                // Try the next format.
+            }
+        }
+
+        throw new \InvalidArgumentException("invalid Start Time '{$value}'.");
+    }
+
+    private function parseSessionDuration(mixed $value): int
+    {
+        preg_match_all('/(\d+)\s*([dhms])/i', trim((string) $value), $matches, PREG_SET_ORDER);
+        if ($matches === []) {
+            return 0;
+        }
+
+        $seconds = 0;
+        foreach ($matches as $match) {
+            $seconds += (int) $match[1] * match (Str::lower($match[2])) {
+                'd' => 86400,
+                'h' => 3600,
+                'm' => 60,
+                default => 1,
+            };
+        }
+
+        return $seconds;
+    }
+
+    private function parseTrafficBytes(mixed $value): int
+    {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return 0;
+        }
+        if (! preg_match('/^([0-9]+(?:\.[0-9]+)?)\s*(KB|MB|GB|TB|B)?$/i', $value, $matches)) {
+            throw new \InvalidArgumentException("invalid traffic value '{$value}'.");
+        }
+
+        $multiplier = match (Str::upper($matches[2] ?? 'B')) {
+            'KB' => 1024,
+            'MB' => 1024 ** 2,
+            'GB' => 1024 ** 3,
+            'TB' => 1024 ** 4,
+            default => 1,
+        };
+
+        return (int) round((float) $matches[1] * $multiplier);
     }
 }

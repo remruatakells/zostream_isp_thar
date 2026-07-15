@@ -569,6 +569,60 @@ class AdminPanelTest extends TestCase
         $this->assertSame('password', Customer::where('username', 'ZNET001')->firstOrFail()->password);
     }
 
+    public function test_admin_can_import_jaze_user_session_history_for_existing_customers(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Ngopa', 'host' => '10.77.0.3', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'ROOKIE', 'mikrotik_profile' => 'zostream_rookie',
+            'rate_limit' => '30M/30M', 'price' => 550,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        Customer::create([
+            'router_id' => $router->id,
+            'package_id' => $package->id,
+            'name' => 'Old Name',
+            'username' => 'ZSNGP037',
+            'password' => 'original-password',
+            'status' => 'active',
+            'expires_at' => today()->addMonth(),
+        ]);
+
+        $csv = implode("\n", [
+            '"A/C No","Franchise Name",Branch,"Account Type",Username,Name,Mobile,"Start Time","Online Time",Download,Upload,Total,"Running Package",IpAddress,MAC,"NAS IP","Server Name","Nas Port Id",SessionId,Protocal',
+            '384854,Lalrinzuala,Ngopa,Regular,ZSNGP037,"Tetei Chhimveng",8119940494,"14/07/2026 09:57","1 d 4 h 29 m 31 s","22.12GB ","1.07GB ","23.19GB ",WIS_ROOKIE_30M,20.10.11.212,28:C8:7C:C7:EE:42,103.168.75.46,service1,ether1,27b394e2bb5738f1,PPPOE',
+            '384855,Lalrinzuala,Ngopa,Regular,UNKNOWN001,"Unknown User",9000000000,"15/07/2026 14:17","10 m",0.00KB,0.00KB,0.00KB,WIS_ROOKIE_30M,20.10.11.213,28:C8:7C:C7:EE:43,103.168.75.46,service1,ether2,unknown-session,PPPOE',
+        ]);
+        $file = UploadedFile::fake()->createWithContent('user_session_history.csv', $csv);
+
+        $this->actingAs($user)->post(route('customers.import.store'), [
+            'router_id' => $router->id,
+            'file' => $file,
+            'duplicate_action' => 'update',
+        ])->assertRedirect(route('customers.import.create'))
+            ->assertSessionHas('warning', 'Session history import complete — 1 sessions imported, 1 customers updated, 1 skipped.');
+
+        $customer = Customer::where('username', 'ZSNGP037')->firstOrFail();
+        $this->assertSame('Tetei Chhimveng', $customer->name);
+        $this->assertSame('8119940494', $customer->phone);
+        $this->assertSame('original-password', $customer->password);
+        $this->assertDatabaseHas('radacct', [
+            'username' => 'ZSNGP037',
+            'nasipaddress' => '103.168.75.46',
+            'nasportid' => 'ether1',
+            'calledstationid' => 'service1',
+            'callingstationid' => '28:C8:7C:C7:EE:42',
+            'framedipaddress' => '20.10.11.212',
+            'acctsessiontime' => 102571,
+            'class' => 'jaze-session-import',
+        ]);
+        $this->assertDatabaseMissing('customers', ['username' => 'UNKNOWN001']);
+    }
+
     public function test_jaze_import_stops_before_writing_when_sub_plan_has_no_matching_active_package(): void
     {
         $user = User::factory()->create();
