@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\Package;
 use App\Models\Router;
@@ -376,7 +377,7 @@ class CustomerImportController extends Controller
             'package_id' => $packageId,
             'name' => $name,
             'phone' => filled($row['phone'] ?? null) ? trim((string) $row['phone']) : null,
-            'branch' => filled($row['branch'] ?? null) ? trim((string) $row['branch']) : null,
+            'branch_id' => $this->branchIdForName($row['branch'] ?? null),
             'address' => $address !== '' ? $address : null,
             'username' => $username,
             'password' => $password,
@@ -410,6 +411,20 @@ class CustomerImportController extends Controller
         }
 
         throw new \InvalidArgumentException("invalid expiry date '{$value}'. Use YYYY-MM-DD, DD/MM/YYYY or the Jaze DD-MM-YYYY HH:MM:SS format.");
+    }
+
+    private function branchIdForName(mixed $value): ?int
+    {
+        $name = trim((string) $value);
+        if ($name === '') {
+            return null;
+        }
+
+        $branch = Branch::query()
+            ->whereRaw('LOWER(name) = ?', [Str::lower($name)])
+            ->first();
+
+        return ($branch ?? Branch::create(['name' => $name, 'is_active' => true]))->id;
     }
 
     private function packageForRow(array $row, $packages, mixed $fallbackPackageId, bool $isJazeImport): Package
@@ -506,7 +521,7 @@ class CustomerImportController extends Controller
                         'phone' => filled($row['phone'] ?? null)
                             ? preg_replace('/\s+/', '', trim((string) $row['phone']))
                             : null,
-                        'branch' => filled($row['branch'] ?? null) ? trim((string) $row['branch']) : null,
+                        'branch_id' => $this->branchIdForName($row['branch'] ?? null),
                         'address' => null,
                         'username' => $username,
                         'password' => 'password',
@@ -525,7 +540,7 @@ class CustomerImportController extends Controller
                         }
                     }
                     if (filled($row['branch'] ?? null)) {
-                        $customerChanges['branch'] = trim((string) $row['branch']);
+                        $customerChanges['branch_id'] = $this->branchIdForName($row['branch']);
                     }
                     if ($customerChanges !== []) {
                         $customer->update($customerChanges);

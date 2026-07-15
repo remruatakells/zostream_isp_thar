@@ -28,7 +28,7 @@ class IspController extends Controller
 
     public function customers(): JsonResponse
     {
-        return response()->json(Customer::with(['router:id,name,host', 'package:id,name,rate_limit,price'])->latest()->paginate(50));
+        return response()->json(Customer::with(['router:id,name,host', 'package:id,name,rate_limit,price', 'branch:id,name'])->latest()->paginate(50));
     }
 
     public function storeCustomer(Request $request, RadiusService $radius): JsonResponse
@@ -37,7 +37,7 @@ class IspController extends Controller
         $customer = Customer::create($data);
         $radius->syncCustomer($customer);
 
-        return response()->json(['data' => $customer->fresh(['router', 'package'])], 201);
+        return response()->json(['data' => $customer->fresh(['router', 'package', 'branch'])], 201);
     }
 
     public function updateCustomer(Request $request, Customer $customer, RadiusService $radius): JsonResponse
@@ -51,7 +51,7 @@ class IspController extends Controller
         $customer->update($data);
         $radius->syncCustomer($customer);
 
-        return response()->json(['data' => $customer->fresh(['router', 'package'])]);
+        return response()->json(['data' => $customer->fresh(['router', 'package', 'branch'])]);
     }
 
     public function syncCustomer(Customer $customer, RadiusService $radius): JsonResponse
@@ -95,7 +95,7 @@ class IspController extends Controller
             'package_id' => ['required', 'exists:packages,id'],
             'name' => ['required', 'string', 'max:150'],
             'phone' => ['nullable', 'string', 'max:30'],
-            'branch' => ['nullable', 'string', 'max:100'],
+            'branch_id' => ['nullable', 'exists:branches,id'],
             'address' => ['nullable', 'string', 'max:1000'],
             'username' => [
                 'required',

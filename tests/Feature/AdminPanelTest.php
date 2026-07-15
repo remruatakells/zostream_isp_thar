@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\Package;
 use App\Models\Router;
@@ -108,6 +109,50 @@ class AdminPanelTest extends TestCase
         $this->assertDatabaseHas('packages', ['mikrotik_profile' => 'home-20m']);
     }
 
+    public function test_admin_can_manage_branches_and_cannot_delete_an_assigned_branch(): void
+    {
+        $user = User::factory()->create();
+
+        $this->actingAs($user)->post(route('branches.store'), [
+            'name' => 'Ngopa',
+            'is_active' => '1',
+        ])->assertRedirect()->assertSessionHas('success');
+
+        $branch = Branch::firstOrFail();
+        $this->actingAs($user)->get(route('branches.index'))
+            ->assertOk()->assertSee('Customer branches')->assertSee('Ngopa');
+
+        $this->actingAs($user)->put(route('branches.update', $branch), [
+            'name' => 'Ngopa Main',
+            'is_active' => '1',
+        ])->assertRedirect()->assertSessionHas('success');
+        $this->assertDatabaseHas('branches', ['name' => 'Ngopa Main', 'is_active' => true]);
+
+        $router = Router::create([
+            'name' => 'Branch Router', 'host' => '10.77.0.20', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Branch Package', 'mikrotik_profile' => 'branch-package',
+            'rate_limit' => '30M/30M', 'price' => 550,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $this->actingAs($user)->get(route('customers.create'))
+            ->assertOk()->assertSee('name="branch_id"', false)->assertSee('Ngopa Main');
+
+        Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'branch_id' => $branch->id, 'name' => 'Assigned Customer',
+            'username' => 'assigned-branch-user', 'password' => 'password',
+            'status' => 'active',
+        ]);
+
+        $this->actingAs($user)->delete(route('branches.destroy', $branch))
+            ->assertRedirect()->assertSessionHas('error');
+        $this->assertDatabaseHas('branches', ['id' => $branch->id]);
+    }
+
     public function test_admin_can_import_customers_from_excel_for_one_router(): void
     {
         $user = User::factory()->create();
@@ -148,11 +193,12 @@ class AdminPanelTest extends TestCase
         ])->assertRedirect(route('customers.import.create'))
             ->assertSessionHas('success', 'Excel import complete — 2 created, 0 updated, 0 skipped.');
 
+        $ngopaBranch = Branch::where('name', 'Ngopa')->firstOrFail();
         $this->assertDatabaseHas('customers', [
             'router_id' => $router->id,
             'package_id' => $package->id,
             'username' => 'excel001',
-            'branch' => 'Ngopa',
+            'branch_id' => $ngopaBranch->id,
             'status' => 'active',
             'expires_at' => '2026-12-31 00:00:00',
         ]);
@@ -272,11 +318,13 @@ class AdminPanelTest extends TestCase
             'rate_limit' => '30M/30M', 'price' => 550,
             'validity_days' => 30, 'is_active' => true,
         ]);
+        $ngopa = Branch::create(['name' => 'Ngopa', 'is_active' => true]);
+        $saitual = Branch::create(['name' => 'Saitual', 'is_active' => true]);
 
         foreach ([
-            ['name' => 'Ngopa Customer', 'username' => 'ngopa-user', 'branch' => 'Ngopa'],
-            ['name' => 'Saitual Customer', 'username' => 'saitual-user', 'branch' => 'Saitual'],
-            ['name' => 'No Branch Customer', 'username' => 'no-branch-user', 'branch' => null],
+            ['name' => 'Ngopa Customer', 'username' => 'ngopa-user', 'branch_id' => $ngopa->id],
+            ['name' => 'Saitual Customer', 'username' => 'saitual-user', 'branch_id' => $saitual->id],
+            ['name' => 'No Branch Customer', 'username' => 'no-branch-user', 'branch_id' => null],
         ] as $customer) {
             Customer::create($customer + [
                 'router_id' => $router->id,
@@ -289,7 +337,7 @@ class AdminPanelTest extends TestCase
 
         $this->actingAs($user)->get(route('customers.index', [
             'router_id' => $router->id,
-            'branch' => 'Ngopa',
+            'branch_id' => $ngopa->id,
         ]))->assertOk()
             ->assertSee('Ngopa Customer')
             ->assertSee('Ngopa')
@@ -310,11 +358,13 @@ class AdminPanelTest extends TestCase
             'rate_limit' => '30M/30M', 'price' => 550,
             'validity_days' => 30, 'is_active' => true,
         ]);
+        $ngopa = Branch::create(['name' => 'Ngopa', 'is_active' => true]);
+        $saitual = Branch::create(['name' => 'Saitual', 'is_active' => true]);
         $customer = Customer::create([
             'router_id' => $router->id,
             'package_id' => $package->id,
             'name' => 'Before Edit',
-            'branch' => 'Ngopa',
+            'branch_id' => $ngopa->id,
             'username' => 'filtered-edit-user',
             'password' => 'password',
             'status' => 'active',
@@ -323,7 +373,7 @@ class AdminPanelTest extends TestCase
         $filteredUrl = route('customers.index', [
             'search' => 'filtered',
             'router_id' => $router->id,
-            'branch' => 'Ngopa',
+            'branch_id' => $ngopa->id,
             'status' => 'active',
             'page' => 3,
         ]);
@@ -340,7 +390,7 @@ class AdminPanelTest extends TestCase
             'package_id' => $package->id,
             'name' => 'After Edit',
             'phone' => '9876543210',
-            'branch' => 'Saitual',
+            'branch_id' => $saitual->id,
             'username' => $customer->username,
             'password' => '',
             'status' => 'active',
@@ -350,7 +400,7 @@ class AdminPanelTest extends TestCase
             ->assertSessionHas('success', 'Customer updated and synced with RADIUS.');
 
         $this->assertSame('After Edit', $customer->fresh()->name);
-        $this->assertSame('Saitual', $customer->fresh()->branch);
+        $this->assertSame($saitual->id, $customer->fresh()->branch_id);
     }
 
     public function test_admin_delete_removes_radius_credentials_and_deletes_the_customer(): void
@@ -654,7 +704,7 @@ class AdminPanelTest extends TestCase
         $customer = Customer::where('username', 'ZSNGP037')->firstOrFail();
         $this->assertSame('Tetei Chhimveng', $customer->name);
         $this->assertSame('8119940494', $customer->phone);
-        $this->assertSame('Ngopa', $customer->branch);
+        $this->assertSame('Ngopa', $customer->branch?->name);
         $this->assertSame('original-password', $customer->password);
         $this->assertDatabaseHas('radacct', [
             'username' => 'ZSNGP037',
@@ -669,7 +719,7 @@ class AdminPanelTest extends TestCase
         $createdCustomer = Customer::where('username', 'UNKNOWN001')->firstOrFail();
         $this->assertSame('password', $createdCustomer->password);
         $this->assertSame($package->id, $createdCustomer->package_id);
-        $this->assertSame('Ngopa', $createdCustomer->branch);
+        $this->assertSame('Ngopa', $createdCustomer->branch?->name);
         $this->assertSame('active', $createdCustomer->status);
         $this->assertDatabaseHas('radcheck', [
             'username' => 'UNKNOWN001',

@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\BranchController;
 use App\Http\Controllers\CustomerController;
 use App\Http\Controllers\CustomerImportController;
 use App\Http\Controllers\MikroTikCustomerImportController;
@@ -36,6 +37,8 @@ Route::middleware('auth')->group(function () {
     Route::get('/customers/import-mikrotik', [MikroTikCustomerImportController::class, 'create'])->name('customers.import-mikrotik.create');
     Route::post('/customers/import-mikrotik', [MikroTikCustomerImportController::class, 'store'])->name('customers.import-mikrotik.store');
     Route::resource('customers', CustomerController::class)->except('show');
+
+    Route::resource('branches', BranchController::class)->only(['index', 'store', 'update', 'destroy']);
 
     Route::resource('payments', PaymentController::class)->only(['index', 'store', 'destroy']);
 });

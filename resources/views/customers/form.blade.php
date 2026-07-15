@@ -8,7 +8,7 @@
     @if($customer->exists)<input type="hidden" name="return_to" value="{{ old('return_to', $returnTo ?? route('customers.index')) }}">@endif
     <label>Full name<input name="name" value="{{ old('name', $customer->name) }}" required placeholder="Customer name"></label>
     <label>Phone<input name="phone" value="{{ old('phone', $customer->phone) }}" placeholder="+91..."></label>
-    <label>Branch<input name="branch" value="{{ old('branch', $customer->branch) }}" maxlength="100" placeholder="e.g. Ngopa"></label>
+    <label>Branch<select name="branch_id"><option value="">No branch</option>@foreach($branches as $branch)<option value="{{ $branch->id }}" @selected((string) old('branch_id', $customer->branch_id) === (string) $branch->id)>{{ $branch->name }}</option>@endforeach</select><small class="form-help">Add or manage choices from the Branches menu.</small></label>
     @if($customer->exists)
         <label>Router<select disabled><option>{{ $customer->router->name }}</option></select><input type="hidden" name="router_id" value="{{ $customer->router_id }}"><small class="form-help">A synced customer cannot be moved silently to another router.</small></label>
     @else

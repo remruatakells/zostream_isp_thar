@@ -18,6 +18,7 @@
         <nav>
             <a class="{{ request()->routeIs('dashboard') ? 'active' : '' }}" href="{{ route('dashboard') }}" title="Overview"><span class="nav-icon">⌂</span><span class="nav-label">Overview</span></a>
             <a class="{{ request()->routeIs('customers.*') ? 'active' : '' }}" href="{{ route('customers.index') }}" title="Customers"><span class="nav-icon">♙</span><span class="nav-label">Customers</span></a>
+            <a class="{{ request()->routeIs('branches.*') ? 'active' : '' }}" href="{{ route('branches.index') }}" title="Branches"><span class="nav-icon">⌖</span><span class="nav-label">Branches</span></a>
             <a class="{{ request()->routeIs('packages.*') ? 'active' : '' }}" href="{{ route('packages.index') }}" title="Packages"><span class="nav-icon">◇</span><span class="nav-label">Packages</span></a>
             <a class="{{ request()->routeIs('payments.*') ? 'active' : '' }}" href="{{ route('payments.index') }}" title="Payments"><span class="nav-icon">₹</span><span class="nav-label">Payments</span></a>
             <a class="{{ request()->routeIs('routers.*') ? 'active' : '' }}" href="{{ route('routers.index') }}" title="Routers"><span class="nav-icon">⌁</span><span class="nav-label">Routers</span></a>
