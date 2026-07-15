@@ -604,7 +604,7 @@ class AdminPanelTest extends TestCase
             'file' => $file,
             'duplicate_action' => 'update',
         ])->assertRedirect(route('customers.import.create'))
-            ->assertSessionHas('warning', 'Session history import complete — 1 sessions imported, 1 customers updated, 1 skipped.');
+            ->assertSessionHas('success', 'Session history import complete — 2 sessions imported, 1 customers created, 1 updated, 0 skipped.');
 
         $customer = Customer::where('username', 'ZSNGP037')->firstOrFail();
         $this->assertSame('Tetei Chhimveng', $customer->name);
@@ -620,7 +620,19 @@ class AdminPanelTest extends TestCase
             'acctsessiontime' => 102571,
             'class' => 'jaze-session-import',
         ]);
-        $this->assertDatabaseMissing('customers', ['username' => 'UNKNOWN001']);
+        $createdCustomer = Customer::where('username', 'UNKNOWN001')->firstOrFail();
+        $this->assertSame('password', $createdCustomer->password);
+        $this->assertSame($package->id, $createdCustomer->package_id);
+        $this->assertSame('active', $createdCustomer->status);
+        $this->assertDatabaseHas('radcheck', [
+            'username' => 'UNKNOWN001',
+            'attribute' => 'Cleartext-Password',
+            'value' => 'password',
+        ]);
+        $this->assertDatabaseHas('radacct', [
+            'username' => 'UNKNOWN001',
+            'nasportid' => 'ether2',
+        ]);
     }
 
     public function test_jaze_import_stops_before_writing_when_sub_plan_has_no_matching_active_package(): void

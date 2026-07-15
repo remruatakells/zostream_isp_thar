@@ -63,6 +63,8 @@ class CustomerImportController extends Controller
         'expiration_time' => 'expires_at',
         'group_name' => 'package_group',
         'sub_plan' => 'package_reference',
+        'running_package' => 'session_package_reference',
+        'base_package' => 'session_base_package_reference',
         'start_time' => 'session_started_at',
         'online_time' => 'session_online_time',
         'download' => 'session_download',
@@ -136,6 +138,7 @@ class CustomerImportController extends Controller
                 $headers,
                 $router,
                 $data['duplicate_action'],
+                $data['package_id'] ?? null,
             );
         }
 
@@ -435,8 +438,18 @@ class CustomerImportController extends Controller
         throw new \InvalidArgumentException("no active admin package matches {$label}. Set the package MikroTik profile to the exact Jaze Sub_plan value.");
     }
 
-    private function importSessionHistory(array $rows, array $headers, Router $router, string $duplicateAction): RedirectResponse
+    private function importSessionHistory(
+        array $rows,
+        array $headers,
+        Router $router,
+        string $duplicateAction,
+        mixed $fallbackPackageId,
+    ): RedirectResponse
     {
+        $packages = Package::where('is_active', true)->get();
+        $fallbackPackage = filled($fallbackPackageId)
+            ? $packages->firstWhere('id', (int) $fallbackPackageId)
+            : null;
         $routerUsernames = Customer::where('router_id', $router->id)->pluck('username');
         DB::table('radacct')
             ->where('class', 'jaze-session-import')
@@ -445,6 +458,7 @@ class CustomerImportController extends Controller
             ->update(['acctstoptime' => now(), 'acctupdatetime' => now()]);
 
         $imported = 0;
+        $created = 0;
         $updated = 0;
         $skipped = 0;
         $errors = [];
@@ -470,37 +484,46 @@ class CustomerImportController extends Controller
                 continue;
             }
 
-            $customer = Customer::where('username', $username)->first();
-            if (! $customer) {
-                $skipped++;
-                $errors[] = "Row {$csvRow}: {$username} is not in the admin database. Import Jaze All Users first because session history has no password.";
-                continue;
-            }
-            if ($customer->router_id !== $router->id) {
-                $skipped++;
-                $errors[] = "Row {$csvRow}: {$username} belongs to another router; skipped.";
-                continue;
-            }
-
-            if ($duplicateAction === 'update') {
-                $customerChanges = [];
-                if (filled($row['name'] ?? null)) {
-                    $customerChanges['name'] = trim((string) $row['name']);
-                }
-                if (filled($row['phone'] ?? null)) {
-                    $customerChanges['phone'] = preg_replace('/\s+/', '', trim((string) $row['phone']));
-                }
-                if ($customerChanges !== []) {
-                    $customer->update($customerChanges);
-                    $updated++;
-                }
-            }
-
             try {
                 $startedAt = $this->parseSessionStart($row['session_started_at'] ?? null);
                 $sessionSeconds = $this->parseSessionDuration($row['session_online_time'] ?? null);
                 $nasIp = trim((string) ($row['session_nas_ip'] ?? '')) ?: $router->host;
                 $uniqueId = md5('jaze|'.$nasIp.'|'.$sessionId.'|'.$username);
+
+                $customer = Customer::where('username', $username)->first();
+                if ($customer && $customer->router_id !== $router->id) {
+                    throw new \InvalidArgumentException("{$username} belongs to another router; skipped.");
+                }
+
+                if (! $customer) {
+                    $package = $this->packageForSessionRow($row, $packages, $fallbackPackage);
+                    $customer = Customer::create([
+                        'router_id' => $router->id,
+                        'package_id' => $package->id,
+                        'name' => trim((string) ($row['name'] ?? '')) ?: $username,
+                        'phone' => filled($row['phone'] ?? null)
+                            ? preg_replace('/\s+/', '', trim((string) $row['phone']))
+                            : null,
+                        'address' => null,
+                        'username' => $username,
+                        'password' => 'password',
+                        'status' => 'active',
+                        'expires_at' => today()->addDays($package->validity_days)->toDateString(),
+                    ]);
+                    $created++;
+                } elseif ($duplicateAction === 'update') {
+                    $customerChanges = [];
+                    if (filled($row['name'] ?? null)) {
+                        $customerChanges['name'] = trim((string) $row['name']);
+                    }
+                    if (filled($row['phone'] ?? null)) {
+                        $customerChanges['phone'] = preg_replace('/\s+/', '', trim((string) $row['phone']));
+                    }
+                    if ($customerChanges !== []) {
+                        $customer->update($customerChanges);
+                        $updated++;
+                    }
+                }
 
                 DB::table('radacct')->updateOrInsert(
                     ['acctuniqueid' => $uniqueId],
@@ -534,11 +557,50 @@ class CustomerImportController extends Controller
             }
         }
 
-        $summary = "Session history import complete — {$imported} sessions imported, {$updated} customers updated, {$skipped} skipped.";
+        $summary = "Session history import complete — {$imported} sessions imported, {$created} customers created, {$updated} updated, {$skipped} skipped.";
 
         return redirect()->route('customers.import.create')
             ->with($errors ? 'warning' : 'success', $summary)
             ->with('import_errors', array_slice($errors, 0, 50));
+    }
+
+    private function packageForSessionRow($row, $packages, ?Package $fallbackPackage): Package
+    {
+        $reference = trim((string) (
+            $row['session_package_reference']
+            ?? $row['session_base_package_reference']
+            ?? ''
+        ));
+        $referenceTokens = $this->planTokens($reference);
+
+        $package = $packages->first(fn (Package $candidate) => $reference !== '' && (
+            Str::lower(trim($candidate->name)) === Str::lower($reference)
+            || Str::lower(trim($candidate->mikrotik_profile)) === Str::lower($reference)
+        ));
+        $package ??= $packages->first(function (Package $candidate) use ($referenceTokens): bool {
+            $nameTokens = $this->planTokens($candidate->name);
+
+            return $referenceTokens !== []
+                && $nameTokens !== []
+                && collect($nameTokens)->every(fn (string $token) => in_array($token, $referenceTokens, true));
+        });
+        $package ??= $fallbackPackage;
+
+        if ($package) {
+            return $package;
+        }
+
+        $label = $reference !== '' ? "Running Package '{$reference}'" : 'the blank Running Package';
+        throw new \InvalidArgumentException("no active admin package matches {$label}. Choose a Default package and import again.");
+    }
+
+    private function planTokens(string $value): array
+    {
+        return array_values(array_filter(explode('_', Str::of($value)
+            ->lower()
+            ->replaceMatches('/[^a-z0-9]+/', '_')
+            ->trim('_')
+            ->toString())));
     }
 
     private function parseSessionStart(mixed $value): string
