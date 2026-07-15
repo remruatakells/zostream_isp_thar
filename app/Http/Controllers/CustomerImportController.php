@@ -551,6 +551,7 @@ class CustomerImportController extends Controller
                 DB::table('radacct')->updateOrInsert(
                     ['acctuniqueid' => $uniqueId],
                     [
+                        'router_id' => $router->id,
                         'acctsessionid' => $sessionId,
                         'username' => $username,
                         'realm' => null,

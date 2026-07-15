@@ -7,10 +7,12 @@ use App\Models\Customer;
 use App\Models\Package;
 use App\Models\Router;
 use App\Services\RadiusService;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
@@ -23,6 +25,7 @@ class CustomerController extends Controller
         $customers = $this->filteredQuery($request)
             ->with(['router', 'package', 'branch'])
             ->orderBy('username')->paginate(15)->withQueryString();
+        $this->attachAccountingUsage($customers->getCollection());
 
         return view('customers.index', [
             'customers' => $customers,
@@ -235,6 +238,54 @@ class CustomerController extends Controller
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('router_id'), fn ($q) => $q->where('router_id', $request->integer('router_id')))
             ->when($request->filled('branch_id'), fn ($q) => $q->where('branch_id', $request->integer('branch_id')));
+    }
+
+    private function attachAccountingUsage($customers): void
+    {
+        if ($customers->isEmpty()) {
+            return;
+        }
+
+        $routerIds = $customers->pluck('router_id')->unique()->values();
+        $routerHosts = $customers->pluck('router.host')->filter()->unique()->values();
+        $usernames = $customers->pluck('username')->unique()->values();
+        $routerIdByHost = $customers->pluck('router_id', 'router.host');
+        $usage = [];
+
+        DB::table('radacct')
+            ->selectRaw('router_id, nasipaddress, username, SUM(COALESCE(acctinputoctets, 0)) as upload_bytes, SUM(COALESCE(acctoutputoctets, 0)) as download_bytes, MAX(COALESCE(acctupdatetime, acctstoptime, acctstarttime)) as last_activity_at')
+            ->whereIn('username', $usernames)
+            ->where(function ($query) use ($routerIds, $routerHosts): void {
+                $query->whereIn('router_id', $routerIds)
+                    ->orWhere(function ($query) use ($routerHosts): void {
+                        $query->whereNull('router_id')->whereIn('nasipaddress', $routerHosts);
+                    });
+            })
+            ->groupBy(['router_id', 'nasipaddress', 'username'])
+            ->get()
+            ->each(function ($row) use (&$usage, $routerIdByHost): void {
+                $routerId = $row->router_id ?: $routerIdByHost->get($row->nasipaddress);
+                if (! $routerId) {
+                    return;
+                }
+
+                $key = $routerId.'|'.$row->username;
+                $usage[$key]['upload'] = ($usage[$key]['upload'] ?? 0) + (int) $row->upload_bytes;
+                $usage[$key]['download'] = ($usage[$key]['download'] ?? 0) + (int) $row->download_bytes;
+                if ($row->last_activity_at && ($usage[$key]['last'] ?? null) < $row->last_activity_at) {
+                    $usage[$key]['last'] = $row->last_activity_at;
+                }
+            });
+
+        $customers->each(function (Customer $customer) use ($usage): void {
+            $totals = $usage[$customer->router_id.'|'.$customer->username] ?? [];
+            $customer->setAttribute('usage_upload_bytes', $totals['upload'] ?? 0);
+            $customer->setAttribute('usage_download_bytes', $totals['download'] ?? 0);
+            $customer->setAttribute(
+                'usage_last_at',
+                isset($totals['last']) ? Carbon::parse($totals['last']) : null,
+            );
+        });
     }
 
     private function validated(Request $request, ?Customer $customer = null): array

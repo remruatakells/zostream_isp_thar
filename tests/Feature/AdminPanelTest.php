@@ -345,6 +345,54 @@ class AdminPanelTest extends TestCase
             ->assertDontSee('No Branch Customer');
     }
 
+    public function test_customer_list_shows_accounting_usage_scoped_to_its_router(): void
+    {
+        $user = User::factory()->create();
+        $package = Package::create([
+            'name' => 'Usage Package', 'mikrotik_profile' => 'usage-package',
+            'rate_limit' => '30M/30M', 'price' => 550,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $routerOne = Router::create([
+            'name' => 'Usage Router One', 'host' => '10.77.0.2', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $routerTwo = Router::create([
+            'name' => 'Usage Router Two', 'host' => '10.77.0.3', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        foreach ([$routerOne, $routerTwo] as $router) {
+            Customer::withoutEvents(fn () => Customer::create([
+                'router_id' => $router->id, 'package_id' => $package->id,
+                'name' => $router->name.' Customer', 'username' => 'same-user',
+                'password' => 'password', 'status' => 'active',
+            ]));
+        }
+        DB::table('radacct')->insert([
+            [
+                'router_id' => $routerOne->id, 'acctsessionid' => 'usage-one',
+                'acctuniqueid' => md5('usage-one'), 'username' => 'same-user',
+                'nasipaddress' => $routerOne->host, 'acctinputoctets' => 1048576,
+                'acctoutputoctets' => 2097152, 'acctupdatetime' => now(),
+            ],
+            [
+                'router_id' => $routerTwo->id, 'acctsessionid' => 'usage-two',
+                'acctuniqueid' => md5('usage-two'), 'username' => 'same-user',
+                'nasipaddress' => $routerTwo->host, 'acctinputoctets' => 3145728,
+                'acctoutputoctets' => 4194304, 'acctupdatetime' => now(),
+            ],
+        ]);
+
+        $this->actingAs($user)->get(route('customers.index', ['router_id' => $routerOne->id]))
+            ->assertOk()
+            ->assertSee('↓ 2.00 MB')
+            ->assertSee('↑ 1.00 MB')
+            ->assertDontSee('↓ 4.00 MB')
+            ->assertDontSee('↑ 3.00 MB');
+    }
+
     public function test_customer_edit_returns_to_the_same_filtered_list_and_page(): void
     {
         $user = User::factory()->create();
@@ -708,6 +756,7 @@ class AdminPanelTest extends TestCase
         $this->assertSame('original-password', $customer->password);
         $this->assertDatabaseHas('radacct', [
             'username' => 'ZSNGP037',
+            'router_id' => $router->id,
             'nasipaddress' => '103.168.75.46',
             'nasportid' => 'ether1',
             'calledstationid' => 'service1',
