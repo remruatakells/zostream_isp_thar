@@ -10,7 +10,6 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
@@ -21,38 +20,22 @@ class CustomerController extends Controller
     public function index(Request $request): View
     {
         $customers = $this->filteredQuery($request)
-            ->addSelect([
-                'connection_port' => DB::table('radacct')
-                    ->select('nasportid')
-                    ->whereColumn('radacct.username', 'customers.username')
-                    ->whereNull('radacct.acctstoptime')
-                    ->orderByDesc('radacct.radacctid')
-                    ->limit(1),
-                'connection_service' => DB::table('radacct')
-                    ->select('calledstationid')
-                    ->whereColumn('radacct.username', 'customers.username')
-                    ->whereNull('radacct.acctstoptime')
-                    ->orderByDesc('radacct.radacctid')
-                    ->limit(1),
-            ])
             ->with(['router', 'package'])
             ->orderBy('username')->paginate(15)->withQueryString();
 
-        $connectionPorts = DB::table('radacct')
-            ->join('customers', 'customers.username', '=', 'radacct.username')
-            ->whereNull('radacct.acctstoptime')
-            ->whereNotNull('radacct.nasportid')
-            ->where('radacct.nasportid', '!=', '')
+        $branches = Customer::query()
+            ->whereNotNull('branch')
+            ->where('branch', '!=', '')
             ->when($request->filled('router_id'), fn ($query) => $query
-                ->where('customers.router_id', $request->integer('router_id')))
+                ->where('router_id', $request->integer('router_id')))
             ->distinct()
-            ->orderBy('radacct.nasportid')
-            ->pluck('radacct.nasportid');
+            ->orderBy('branch')
+            ->pluck('branch');
 
         return view('customers.index', [
             'customers' => $customers,
             'routers' => Router::orderBy('name')->get(),
-            'connectionPorts' => $connectionPorts,
+            'branches' => $branches,
         ]);
     }
 
@@ -128,7 +111,7 @@ class CustomerController extends Controller
             'search' => ['nullable', 'string', 'max:150'],
             'status' => ['nullable', Rule::in(['active', 'suspended'])],
             'router_id' => ['nullable', 'exists:routers,id'],
-            'connection_port' => ['nullable', 'string', 'max:32'],
+            'branch' => ['nullable', 'string', 'max:100'],
             'after_id' => ['nullable', 'integer', 'min:0'],
             'synced_total' => ['nullable', 'integer', 'min:0'],
             'failed_total' => ['nullable', 'integer', 'min:0'],
@@ -246,15 +229,11 @@ class CustomerController extends Controller
             ->when($request->filled('search'), fn ($q) => $q->where(fn ($q) => $q
                 ->where('name', 'like', '%'.$request->string('search').'%')
                 ->orWhere('username', 'like', '%'.$request->string('search').'%')
-                ->orWhere('phone', 'like', '%'.$request->string('search').'%')))
+                ->orWhere('phone', 'like', '%'.$request->string('search').'%')
+                ->orWhere('branch', 'like', '%'.$request->string('search').'%')))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
             ->when($request->filled('router_id'), fn ($q) => $q->where('router_id', $request->integer('router_id')))
-            ->when($request->filled('connection_port'), fn ($q) => $q->whereExists(fn ($accounting) => $accounting
-                ->selectRaw('1')
-                ->from('radacct')
-                ->whereColumn('radacct.username', 'customers.username')
-                ->whereNull('radacct.acctstoptime')
-                ->where('radacct.nasportid', (string) $request->input('connection_port'))));
+            ->when($request->filled('branch'), fn ($q) => $q->where('branch', (string) $request->input('branch')));
     }
 
     private function validated(Request $request, ?Customer $customer = null): array
@@ -268,6 +247,7 @@ class CustomerController extends Controller
             'package_id' => ['required', 'exists:packages,id'],
             'name' => ['required', 'string', 'max:150'],
             'phone' => ['nullable', 'string', 'max:30'],
+            'branch' => ['nullable', 'string', 'max:100'],
             'address' => ['nullable', 'string', 'max:1000'],
             'username' => [
                 'required',

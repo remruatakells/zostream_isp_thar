@@ -124,9 +124,9 @@ class AdminPanelTest extends TestCase
 
         $spreadsheet = new Spreadsheet;
         $spreadsheet->getActiveSheet()->fromArray([
-            ['full name', 'mobile', 'address', 'pppoe username', 'pppoe password', 'status', 'expiry date'],
-            ['Excel Customer One', '9876543210', 'Address One', 'excel001', 'pass-one', 'active', '2026-12-31'],
-            ['Excel Customer Two', '9876543211', 'Address Two', 'excel002', 'pass-two', 'disabled', '31/12/2026'],
+            ['full name', 'mobile', 'branch', 'address', 'pppoe username', 'pppoe password', 'status', 'expiry date'],
+            ['Excel Customer One', '9876543210', 'Ngopa', 'Address One', 'excel001', 'pass-one', 'active', '2026-12-31'],
+            ['Excel Customer Two', '9876543211', 'Saitual', 'Address Two', 'excel002', 'pass-two', 'disabled', '31/12/2026'],
         ]);
         $path = tempnam(sys_get_temp_dir(), 'customer-import-');
         (new Xlsx($spreadsheet))->save($path);
@@ -152,6 +152,7 @@ class AdminPanelTest extends TestCase
             'router_id' => $router->id,
             'package_id' => $package->id,
             'username' => 'excel001',
+            'branch' => 'Ngopa',
             'status' => 'active',
             'expires_at' => '2026-12-31 00:00:00',
         ]);
@@ -258,24 +259,24 @@ class AdminPanelTest extends TestCase
         Http::assertNothingSent();
     }
 
-    public function test_admin_can_filter_live_customers_by_mikrotik_connection_port(): void
+    public function test_admin_can_filter_customers_by_branch(): void
     {
         $user = User::factory()->create();
         $router = Router::create([
-            'name' => 'Port Filter Router', 'host' => '10.77.0.3', 'port' => 80,
+            'name' => 'Branch Filter Router', 'host' => '10.77.0.3', 'port' => 80,
             'username' => 'api', 'password' => 'secret',
             'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
         ]);
         $package = Package::create([
-            'name' => 'Port Filter Package', 'mikrotik_profile' => 'port-filter',
+            'name' => 'Branch Filter Package', 'mikrotik_profile' => 'branch-filter',
             'rate_limit' => '30M/30M', 'price' => 550,
             'validity_days' => 30, 'is_active' => true,
         ]);
 
         foreach ([
-            ['name' => 'Ether One Customer', 'username' => 'ether-one-user'],
-            ['name' => 'Ether Two Customer', 'username' => 'ether-two-user'],
-            ['name' => 'Offline Customer', 'username' => 'offline-port-user'],
+            ['name' => 'Ngopa Customer', 'username' => 'ngopa-user', 'branch' => 'Ngopa'],
+            ['name' => 'Saitual Customer', 'username' => 'saitual-user', 'branch' => 'Saitual'],
+            ['name' => 'No Branch Customer', 'username' => 'no-branch-user', 'branch' => null],
         ] as $customer) {
             Customer::create($customer + [
                 'router_id' => $router->id,
@@ -286,29 +287,14 @@ class AdminPanelTest extends TestCase
             ]);
         }
 
-        foreach ([
-            ['username' => 'ether-one-user', 'port' => 'ether1', 'session' => 'port-session-1'],
-            ['username' => 'ether-two-user', 'port' => 'ether2', 'session' => 'port-session-2'],
-        ] as $accounting) {
-            DB::table('radacct')->insert([
-                'acctsessionid' => $accounting['session'],
-                'acctuniqueid' => md5($accounting['session']),
-                'username' => $accounting['username'],
-                'nasipaddress' => $router->host,
-                'nasportid' => $accounting['port'],
-                'calledstationid' => 'service1',
-                'acctstarttime' => now()->subMinutes(5),
-            ]);
-        }
-
         $this->actingAs($user)->get(route('customers.index', [
             'router_id' => $router->id,
-            'connection_port' => 'ether1',
+            'branch' => 'Ngopa',
         ]))->assertOk()
-            ->assertSee('Ether One Customer')
-            ->assertSee('ether1')
-            ->assertDontSee('Ether Two Customer')
-            ->assertDontSee('Offline Customer');
+            ->assertSee('Ngopa Customer')
+            ->assertSee('Ngopa')
+            ->assertDontSee('Saitual Customer')
+            ->assertDontSee('No Branch Customer');
     }
 
     public function test_customer_edit_returns_to_the_same_filtered_list_and_page(): void
@@ -328,6 +314,7 @@ class AdminPanelTest extends TestCase
             'router_id' => $router->id,
             'package_id' => $package->id,
             'name' => 'Before Edit',
+            'branch' => 'Ngopa',
             'username' => 'filtered-edit-user',
             'password' => 'password',
             'status' => 'active',
@@ -336,7 +323,7 @@ class AdminPanelTest extends TestCase
         $filteredUrl = route('customers.index', [
             'search' => 'filtered',
             'router_id' => $router->id,
-            'connection_port' => 'ether1',
+            'branch' => 'Ngopa',
             'status' => 'active',
             'page' => 3,
         ]);
@@ -353,6 +340,7 @@ class AdminPanelTest extends TestCase
             'package_id' => $package->id,
             'name' => 'After Edit',
             'phone' => '9876543210',
+            'branch' => 'Saitual',
             'username' => $customer->username,
             'password' => '',
             'status' => 'active',
@@ -362,6 +350,7 @@ class AdminPanelTest extends TestCase
             ->assertSessionHas('success', 'Customer updated and synced with RADIUS.');
 
         $this->assertSame('After Edit', $customer->fresh()->name);
+        $this->assertSame('Saitual', $customer->fresh()->branch);
     }
 
     public function test_admin_delete_removes_radius_credentials_and_deletes_the_customer(): void
@@ -665,6 +654,7 @@ class AdminPanelTest extends TestCase
         $customer = Customer::where('username', 'ZSNGP037')->firstOrFail();
         $this->assertSame('Tetei Chhimveng', $customer->name);
         $this->assertSame('8119940494', $customer->phone);
+        $this->assertSame('Ngopa', $customer->branch);
         $this->assertSame('original-password', $customer->password);
         $this->assertDatabaseHas('radacct', [
             'username' => 'ZSNGP037',
@@ -679,6 +669,7 @@ class AdminPanelTest extends TestCase
         $createdCustomer = Customer::where('username', 'UNKNOWN001')->firstOrFail();
         $this->assertSame('password', $createdCustomer->password);
         $this->assertSame($package->id, $createdCustomer->package_id);
+        $this->assertSame('Ngopa', $createdCustomer->branch);
         $this->assertSame('active', $createdCustomer->status);
         $this->assertDatabaseHas('radcheck', [
             'username' => 'UNKNOWN001',

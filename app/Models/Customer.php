@@ -11,7 +11,7 @@ class Customer extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['router_id', 'package_id', 'name', 'phone', 'address', 'username', 'password', 'status', 'expires_at', 'mikrotik_id', 'last_synced_at'];
+    protected $fillable = ['router_id', 'package_id', 'name', 'phone', 'branch', 'address', 'username', 'password', 'status', 'expires_at', 'mikrotik_id', 'last_synced_at'];
 
     protected $hidden = ['password'];
 

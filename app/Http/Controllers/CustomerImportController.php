@@ -37,6 +37,7 @@ class CustomerImportController extends Controller
         'mobile_number' => 'phone',
         'phone_number' => 'phone',
         'contact' => 'phone',
+        'branch' => 'branch',
         'address' => 'address',
         'installation_address' => 'address',
         'address_line1' => 'address_line1',
@@ -236,8 +237,8 @@ class CustomerImportController extends Controller
         if (! class_exists(Spreadsheet::class)) {
             return response()->streamDownload(function (): void {
                 $output = fopen('php://output', 'wb');
-                fputcsv($output, ['name', 'phone', 'address', 'username', 'password', 'status', 'expires_at'], ',', '"', '');
-                fputcsv($output, ['Sample Customer', '9876543210', 'Locality / address', 'customer001', 'ChangeMe123', 'active', now()->addMonth()->format('Y-m-d')], ',', '"', '');
+                fputcsv($output, ['name', 'phone', 'branch', 'address', 'username', 'password', 'status', 'expires_at'], ',', '"', '');
+                fputcsv($output, ['Sample Customer', '9876543210', 'Ngopa', 'Locality / address', 'customer001', 'ChangeMe123', 'active', now()->addMonth()->format('Y-m-d')], ',', '"', '');
                 fclose($output);
             }, 'zostream-customer-import-template.csv', [
                 'Content-Type' => 'text/csv; charset=UTF-8',
@@ -248,11 +249,11 @@ class CustomerImportController extends Controller
         $sheet = $spreadsheet->getActiveSheet();
         $sheet->setTitle('Customers');
         $sheet->fromArray([
-            ['name', 'phone', 'address', 'username', 'password', 'status', 'expires_at'],
-            ['Sample Customer', '9876543210', 'Locality / address', 'customer001', 'ChangeMe123', 'active', now()->addMonth()->format('Y-m-d')],
+            ['name', 'phone', 'branch', 'address', 'username', 'password', 'status', 'expires_at'],
+            ['Sample Customer', '9876543210', 'Ngopa', 'Locality / address', 'customer001', 'ChangeMe123', 'active', now()->addMonth()->format('Y-m-d')],
         ]);
-        $sheet->getStyle('A1:G1')->getFont()->setBold(true);
-        foreach (range('A', 'G') as $column) {
+        $sheet->getStyle('A1:H1')->getFont()->setBold(true);
+        foreach (range('A', 'H') as $column) {
             $sheet->getColumnDimension($column)->setAutoSize(true);
         }
         $sheet->freezePane('A2');
@@ -375,6 +376,7 @@ class CustomerImportController extends Controller
             'package_id' => $packageId,
             'name' => $name,
             'phone' => filled($row['phone'] ?? null) ? trim((string) $row['phone']) : null,
+            'branch' => filled($row['branch'] ?? null) ? trim((string) $row['branch']) : null,
             'address' => $address !== '' ? $address : null,
             'username' => $username,
             'password' => $password,
@@ -504,6 +506,7 @@ class CustomerImportController extends Controller
                         'phone' => filled($row['phone'] ?? null)
                             ? preg_replace('/\s+/', '', trim((string) $row['phone']))
                             : null,
+                        'branch' => filled($row['branch'] ?? null) ? trim((string) $row['branch']) : null,
                         'address' => null,
                         'username' => $username,
                         'password' => 'password',
@@ -511,13 +514,18 @@ class CustomerImportController extends Controller
                         'expires_at' => today()->addDays($package->validity_days)->toDateString(),
                     ]);
                     $created++;
-                } elseif ($duplicateAction === 'update') {
+                } else {
                     $customerChanges = [];
-                    if (filled($row['name'] ?? null)) {
-                        $customerChanges['name'] = trim((string) $row['name']);
+                    if ($duplicateAction === 'update') {
+                        if (filled($row['name'] ?? null)) {
+                            $customerChanges['name'] = trim((string) $row['name']);
+                        }
+                        if (filled($row['phone'] ?? null)) {
+                            $customerChanges['phone'] = preg_replace('/\s+/', '', trim((string) $row['phone']));
+                        }
                     }
-                    if (filled($row['phone'] ?? null)) {
-                        $customerChanges['phone'] = preg_replace('/\s+/', '', trim((string) $row['phone']));
+                    if (filled($row['branch'] ?? null)) {
+                        $customerChanges['branch'] = trim((string) $row['branch']);
                     }
                     if ($customerChanges !== []) {
                         $customer->update($customerChanges);
