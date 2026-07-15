@@ -255,6 +255,59 @@ class AdminPanelTest extends TestCase
         Http::assertNothingSent();
     }
 
+    public function test_admin_can_filter_live_customers_by_mikrotik_connection_port(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Port Filter Router', 'host' => '10.77.0.3', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Port Filter Package', 'mikrotik_profile' => 'port-filter',
+            'rate_limit' => '30M/30M', 'price' => 550,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+
+        foreach ([
+            ['name' => 'Ether One Customer', 'username' => 'ether-one-user'],
+            ['name' => 'Ether Two Customer', 'username' => 'ether-two-user'],
+            ['name' => 'Offline Customer', 'username' => 'offline-port-user'],
+        ] as $customer) {
+            Customer::create($customer + [
+                'router_id' => $router->id,
+                'package_id' => $package->id,
+                'password' => 'password',
+                'status' => 'active',
+                'expires_at' => today()->addMonth(),
+            ]);
+        }
+
+        foreach ([
+            ['username' => 'ether-one-user', 'port' => 'ether1', 'session' => 'port-session-1'],
+            ['username' => 'ether-two-user', 'port' => 'ether2', 'session' => 'port-session-2'],
+        ] as $accounting) {
+            DB::table('radacct')->insert([
+                'acctsessionid' => $accounting['session'],
+                'acctuniqueid' => md5($accounting['session']),
+                'username' => $accounting['username'],
+                'nasipaddress' => $router->host,
+                'nasportid' => $accounting['port'],
+                'calledstationid' => 'service1',
+                'acctstarttime' => now()->subMinutes(5),
+            ]);
+        }
+
+        $this->actingAs($user)->get(route('customers.index', [
+            'router_id' => $router->id,
+            'connection_port' => 'ether1',
+        ]))->assertOk()
+            ->assertSee('Ether One Customer')
+            ->assertSee('ether1')
+            ->assertDontSee('Ether Two Customer')
+            ->assertDontSee('Offline Customer');
+    }
+
     public function test_admin_delete_removes_radius_credentials_and_deletes_the_customer(): void
     {
         $user = User::factory()->create();

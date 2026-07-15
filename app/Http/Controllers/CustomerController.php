@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\View\View;
 use Throwable;
@@ -19,12 +20,38 @@ class CustomerController extends Controller
     public function index(Request $request): View
     {
         $customers = $this->filteredQuery($request)
+            ->addSelect([
+                'connection_port' => DB::table('radacct')
+                    ->select('nasportid')
+                    ->whereColumn('radacct.username', 'customers.username')
+                    ->whereNull('radacct.acctstoptime')
+                    ->orderByDesc('radacct.radacctid')
+                    ->limit(1),
+                'connection_service' => DB::table('radacct')
+                    ->select('calledstationid')
+                    ->whereColumn('radacct.username', 'customers.username')
+                    ->whereNull('radacct.acctstoptime')
+                    ->orderByDesc('radacct.radacctid')
+                    ->limit(1),
+            ])
             ->with(['router', 'package'])
             ->orderBy('username')->paginate(15)->withQueryString();
+
+        $connectionPorts = DB::table('radacct')
+            ->join('customers', 'customers.username', '=', 'radacct.username')
+            ->whereNull('radacct.acctstoptime')
+            ->whereNotNull('radacct.nasportid')
+            ->where('radacct.nasportid', '!=', '')
+            ->when($request->filled('router_id'), fn ($query) => $query
+                ->where('customers.router_id', $request->integer('router_id')))
+            ->distinct()
+            ->orderBy('radacct.nasportid')
+            ->pluck('radacct.nasportid');
 
         return view('customers.index', [
             'customers' => $customers,
             'routers' => Router::orderBy('name')->get(),
+            'connectionPorts' => $connectionPorts,
         ]);
     }
 
@@ -90,6 +117,7 @@ class CustomerController extends Controller
             'search' => ['nullable', 'string', 'max:150'],
             'status' => ['nullable', Rule::in(['active', 'suspended'])],
             'router_id' => ['nullable', 'exists:routers,id'],
+            'connection_port' => ['nullable', 'string', 'max:32'],
             'after_id' => ['nullable', 'integer', 'min:0'],
             'synced_total' => ['nullable', 'integer', 'min:0'],
             'failed_total' => ['nullable', 'integer', 'min:0'],
@@ -182,7 +210,13 @@ class CustomerController extends Controller
                 ->orWhere('username', 'like', '%'.$request->string('search').'%')
                 ->orWhere('phone', 'like', '%'.$request->string('search').'%')))
             ->when($request->filled('status'), fn ($q) => $q->where('status', $request->string('status')))
-            ->when($request->filled('router_id'), fn ($q) => $q->where('router_id', $request->integer('router_id')));
+            ->when($request->filled('router_id'), fn ($q) => $q->where('router_id', $request->integer('router_id')))
+            ->when($request->filled('connection_port'), fn ($q) => $q->whereExists(fn ($accounting) => $accounting
+                ->selectRaw('1')
+                ->from('radacct')
+                ->whereColumn('radacct.username', 'customers.username')
+                ->whereNull('radacct.acctstoptime')
+                ->where('radacct.nasportid', (string) $request->input('connection_port'))));
     }
 
     private function validated(Request $request, ?Customer $customer = null): array

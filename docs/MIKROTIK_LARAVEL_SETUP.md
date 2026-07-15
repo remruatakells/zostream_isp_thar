@@ -1,6 +1,6 @@
 # MikroTik leh Laravel Admin Panel Setup
 
-> Tunah production design chu router tinah customer PPP Secret provision lovin central FreeRADIUS a hmang. VPS, Winbox leh staged cutover atan [RADIUS_CUTOVER_SETUP.md](RADIUS_CUTOVER_SETUP.md) zawm rawh. A hnuaia REST setup chu router health check leh active session disconnect nan a la ngai.
+> **Legacy/local-LAN REST reference:** Tunah production design chu router tinah customer PPP Secret provision lovin central FreeRADIUS a hmang. Production setup atan [RADIUS_CUTOVER_SETUP.md](RADIUS_CUTOVER_SETUP.md) zawm rawh. A hnuaia `192.168.1.x` setup chu local development/diagnosis reference chauh a ni; VPS production-ah WireGuard IP leh private firewall rules hman tur a ni.
 
 He document hi MikroTik RouterOS 7 router chu ZoStream ISP Laravel admin panel nen REST API hmanga connect dan step-by-step a ni.
 

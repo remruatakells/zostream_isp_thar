@@ -1,19 +1,28 @@
 # ZoStream ISP Control
 
-Laravel 13 admin panel and JSON API for managing MikroTik PPPoE subscribers.
+Laravel 13 admin panel and JSON API for managing MikroTik PPPoE subscribers through central FreeRADIUS, a shared MySQL database and private WireGuard-connected routers.
 
 ## Included
 
 - Secure administrator login
 - Dashboard with customer, revenue, expiry and router summaries
 - MikroTik router management and connection testing
-- Internet packages mapped to RouterOS PPP profiles
-- PPPoE customer creation, update, sync, activate and suspend
+- Internet packages mapped to per-user RADIUS speed attributes
+- Automatic FreeRADIUS customer, package and NAS synchronization
+- PPPoE customer creation, update, activation, suspension and recovery sync
 - Payment ledger with one-click package renewal
-- Hourly expired-customer suspension command
+- Daily midnight expired-customer suspension command
 - Bearer-token protected JSON API
 - Encrypted router and PPPoE passwords at rest
 - Responsive UI with no Node/Vite build requirement
+
+## Production documentation
+
+- [Canonical Laravel + FreeRADIUS + MikroTik production setup](docs/RADIUS_CUTOVER_SETUP.md)
+- [WireGuard + REST infrastructure setup](docs/MIKROTIK_VPS_LARAVEL_FULL_SETUP.md)
+- [Legacy local-LAN REST reference](docs/MIKROTIK_LARAVEL_SETUP.md)
+
+The current subscriber path is Laravel → MySQL RADIUS tables → FreeRADIUS → MikroTik PPPoE. RouterOS REST is used for health, live sessions and disconnect actions; normal customer operations do not provision local MikroTik PPP Secrets.
 
 ## Local setup
 
@@ -35,6 +44,8 @@ Password: change-me-now
 Change `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and `ISP_API_TOKEN` before seeding a production database. Do not rotate `APP_KEY` after saving router credentials; it is used to encrypt them.
 
 ## MikroTik RouterOS 7 preparation
+
+The commands below cover only REST. Production subscriber authentication also requires the central FreeRADIUS procedure in [docs/RADIUS_CUTOVER_SETUP.md](docs/RADIUS_CUTOVER_SETUP.md).
 
 Use a dedicated API account limited to the admin-panel server's IP. In Winbox Terminal, replace the example IP and password:
 
@@ -92,6 +103,8 @@ Or add the normal `php artisan schedule:run` cron entry. Manual execution:
 ```bash
 php artisan isp:suspend-expired
 ```
+
+The application schedules this command daily at `00:00` in `Asia/Kolkata`. The system cron must still invoke `schedule:run` every minute.
 
 ## Verification
 

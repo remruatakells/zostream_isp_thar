@@ -4,6 +4,8 @@
 
 This document explains how to connect one or more MikroTik routers to a Laravel admin panel hosted on a public VPS. The recommended design uses a private WireGuard tunnel. MikroTik REST port 80 is reachable only from the VPS tunnel IP and is not exposed to the public internet.
 
+> **Current production authentication:** Subscribers are authenticated by central FreeRADIUS using the same MySQL database as Laravel. REST is retained for router health, active-session discovery and disconnect actions. The complete, current RADIUS and PPPoE procedure is in [RADIUS_CUTOVER_SETUP.md](RADIUS_CUTOVER_SETUP.md); that guide is authoritative if this older WireGuard/REST walkthrough conflicts with it.
+
 > **Important:** Never paste a WireGuard private key or production password into chat, email, screenshots, source control, or this document. If a private key or temporary password has already been shared, rotate it before production use.
 
 ## 1. Final network design
@@ -22,7 +24,11 @@ MikroTik router 3: 10.77.0.4/24
 
 The Laravel server connects to router 1 using `http://10.77.0.2/rest/...`. HTTP is acceptable inside this design because the traffic is encrypted by WireGuard. Do not expose MikroTik port 80 to the public internet.
 
-RADIUS is not required for this connection. RADIUS authenticates PPP/Hotspot users; the admin panel uses RouterOS REST API.
+FreeRADIUS and REST have different jobs:
+
+- FreeRADIUS authenticates PPPoE subscribers and returns package speed/accounting attributes.
+- REST checks router health, reads current PPP sessions and disconnects suspended/deleted sessions.
+- Both paths stay private inside WireGuard.
 
 ## 2. Information to prepare
 
@@ -35,6 +41,9 @@ RADIUS is not required for this connection. RADIUS authenticates PPP/Hotspot use
 | MikroTik WireGuard interface | `wg-vps` |
 | REST user | `zostream-api` |
 | REST port | `80` |
+| RADIUS server | `10.77.0.1` |
+| RADIUS ports | `1812/udp`, `1813/udp` |
+| Router RADIUS source | the router's own WireGuard IP |
 
 Choose a different tunnel IP for every additional router. Never reuse a WireGuard private/public key pair between routers.
 
@@ -363,6 +372,8 @@ php artisan migrate --force
 php artisan optimize
 ```
 
+The current migrations include the FreeRADIUS user, accounting, NAS and group-query tables. Confirm that `radcheck`, `radreply`, `nas`, `radacct`, `radpostauth`, `radusergroup`, `radgroupcheck` and `radgroupreply` exist before enabling subscriber authentication.
+
 Run `php artisan migrate --seed --force` only when intentionally creating/updating the seeded admin account. Change the default `admin@example.com / change-me-now` credentials before production use.
 
 `APP_KEY` encrypts saved router passwords. Back it up securely and do not rotate it after router credentials have been saved unless a planned re-encryption migration is performed.
@@ -384,9 +395,13 @@ Run `php artisan migrate --seed --force` only when intentionally creating/updati
 | Use HTTPS | OFF |
 | Verify TLS certificate | OFF |
 | Router is active | ON |
+| Enable RADIUS | ON |
+| RADIUS shared secret | unique 16–60 character secret for this router |
 
 5. Click **Save router**.
 6. On the router list, click **Test**.
+7. In MikroTik **RADIUS**, use the exact same shared secret, server `10.77.0.1`, service `ppp`, and this router's WireGuard IP as **Src. Address**.
+8. Restart FreeRADIUS after adding/changing the router so `read_clients = yes` reloads the `nas` table.
 
 Expected success message:
 
@@ -396,19 +411,22 @@ Connected to RB5009UG+S+ (RouterOS 7.19.6 (stable)).
 
 The admin panel stores the router password encrypted using Laravel's application key.
 
-## 19. Confirm full admin workflow
+## 19. Confirm the current FreeRADIUS admin workflow
 
-After the router test succeeds:
+After the router REST test and RADIUS setup succeed:
 
-1. Open **Packages** and create a package with a RouterOS-compatible rate limit such as `10M/10M`.
-2. Use **Sync** to create or update the PPP profile on all active routers.
-3. Open **Customers → Add customer**.
-4. Select the correct router and package.
-5. Enter the PPPoE username, password, status, and expiry.
-6. Save the customer. The panel creates or updates `/ppp/secret` on that router.
-7. Use the customer **Sync** action and confirm no warning is shown.
+1. Open **Packages** and create a package with a RouterOS-compatible rate such as `10M/10M`.
+2. Open **Customers → Add customer**.
+3. Select the correct router and package.
+4. Enter a globally unique PPPoE username, password, Active status and future expiry.
+5. Save. Laravel automatically writes the password/status to `radcheck` and package speed/accounting interval to `radreply`.
+6. Configure the customer ONU/ONT/CPE with the same case-sensitive credentials.
+7. Confirm MikroTik RADIUS **Accepts** increases and the user appears under **PPP → Active Connections**.
+8. Suspend the customer and verify the active session disconnects and the next login is rejected.
+9. Renew/reactivate and verify the next login succeeds.
+10. Change the package, verify `radreply.Mikrotik-Rate-Limit` changes and reconnect to apply the new speed.
 
-Deleting a customer from this panel does not automatically delete the MikroTik secret; this is intentional in the current project.
+Normal customer work does not create or update local MikroTik PPP Secrets. The customer **Sync** action is retained for RADIUS backfill/recovery. Legacy local secrets must be removed in controlled batches after successful tests because RouterOS checks a matching local secret before RADIUS.
 
 ## 20. Configure additional MikroTik routers
 
@@ -445,8 +463,11 @@ On router 2, repeat the Winbox steps with:
 - REST user Allowed Address `10.77.0.1/32`.
 - Service and firewall restricted to `10.77.0.1/32`.
 - Prefer a different strong REST password for each router.
+- Add a unique RADIUS shared secret in the admin panel and MikroTik.
+- Set MikroTik RADIUS **Src. Address** to `10.77.0.3`.
+- Restart FreeRADIUS after the `nas` row is added or changed.
 
-Finally, add router 2 to Laravel with host `10.77.0.3`. The project supports multiple router records; each customer is assigned to one router, while package Sync runs across all active routers.
+Finally, add router 2 to Laravel with host `10.77.0.3`. The project supports multiple router records; each customer is assigned to one router, while central package rates are written to each assigned subscriber's RADIUS reply row.
 
 ## 21. Troubleshooting decision table
 
@@ -460,6 +481,11 @@ Finally, add router 2 to Laravel with host `10.77.0.3`. The project supports mul
 | Rule packet counter remains 0 | Traffic does not reach that rule | Check rule order, interface/source match, and destination address |
 | Laravel Test fails but VPS curl works | Saved panel configuration differs | Check host, port, username/password, HTTP/HTTPS switches; clear config cache if `.env` changed |
 | Handshake stops after a while behind NAT | Router mapping expired | Set Persistent Keepalive to 25 seconds on MikroTik |
+| RADIUS Requests stay at 0 | PPPoE login never reached RADIUS | Check CPE attempt, PPPoE server interface/service, Use RADIUS, local PPP Secret priority and OLT/VLAN path |
+| Requests rise and Timeouts rise | FreeRADIUS did not reply | Check UDP 1812 on `wg0`, NAS source IP, `read_clients = yes`, shared secret and FreeRADIUS restart |
+| Correct password still Access-Rejects | SQL authorize failed or account is rejected | Inspect `radcheck`, `radpostauth` and `freeradius -X`; migrate missing group tables |
+| Access-Accept but no PPP Active session | PPP negotiation/profile failed | Check default profile local address, remote pool, PPP logs and CPE behavior |
+| PPP Active exists but no internet | Routing/NAT/DNS problem | Check assigned IP, default route, masquerade/routed pool and PPP DNS |
 
 Useful commands:
 
@@ -495,18 +521,23 @@ MikroTik verification commands:
 - Restrict Winbox to management networks/tunnel addresses separately.
 - Keep RouterOS, Ubuntu, PHP, Laravel dependencies, and the web server patched.
 - Use HTTPS for the public Laravel admin panel.
+- Keep RADIUS UDP 1812/1813 reachable only over `wg0` from the router subnet.
+- Keep MySQL private; FreeRADIUS uses recoverable PPP credentials in `radcheck`.
+- Add login throttling before broad public exposure of the admin panel.
+- Run Laravel `schedule:run` every minute so the midnight expiry command executes.
 - Back up `/etc/wireguard/wg0.conf`, Laravel `.env`, `APP_KEY`, and the database securely.
 - Test restoring the backup before relying on it.
 - Review `/user active`, WireGuard peer endpoints, and firewall counters periodically.
 
 ## 23. Safe rollout and cleanup
 
-1. Confirm WireGuard handshake.
-2. Confirm VPS ping to the MikroTik tunnel IP.
-3. Confirm REST curl returns system JSON.
-4. Confirm Laravel **Test** succeeds.
-5. Confirm package and one test customer sync.
-6. Only then disable obsolete LAN/public REST rules and old temporary accounts.
-7. Rotate temporary credentials and make a final backup.
+1. Confirm WireGuard handshake and VPS ping to the MikroTik tunnel IP.
+2. Confirm REST curl returns system JSON and Laravel **Test** succeeds.
+3. Confirm FreeRADIUS SQL/NAS configuration and zero RADIUS Timeouts/Bad Replies.
+4. Confirm one test customer receives Access-Accept, a PPP address, internet and its package speed.
+5. Confirm suspend, renew, expiry and accounting behavior.
+6. Remove migrated local PPP Secrets only in small verified batches.
+7. Disable obsolete LAN/public REST rules and old temporary accounts.
+8. Rotate every credential/key exposed during setup and make a final tested backup.
 
 Following this order prevents accidental lockout and leaves a clear rollback path.
