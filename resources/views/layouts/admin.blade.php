@@ -6,7 +6,7 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Dashboard') · {{ config('app.name') }}</title>
     <script>try{if(localStorage.getItem('zostream.sidebar.collapsed')==='1')document.documentElement.classList.add('nav-collapsed')}catch(e){}</script>
-    <link rel="stylesheet" href="{{ asset('css/admin.css') }}">
+    <link rel="stylesheet" href="{{ asset('css/admin.css') }}?v={{ filemtime(public_path('css/admin.css')) }}">
 </head>
 <body>
 <div class="app-shell">
@@ -51,7 +51,7 @@
         </div>
     </main>
 </div>
-<script src="{{ asset('js/admin.js') }}"></script>
+<script src="{{ asset('js/admin.js') }}?v={{ filemtime(public_path('js/admin.js')) }}"></script>
 @stack('scripts')
 </body>
 </html>
