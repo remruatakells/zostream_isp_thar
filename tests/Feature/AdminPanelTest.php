@@ -150,6 +150,12 @@ class AdminPanelTest extends TestCase
             'username' => 'api', 'password' => 'secret',
             'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
         ]);
+        $otherRouter = Router::create([
+            'name' => 'Other Operator Router', 'host' => '10.77.0.19', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $ownBranch->update(['router_id' => $router->id]);
         $package = Package::create([
             'name' => 'Operator Package', 'mikrotik_profile' => 'operator-package',
             'rate_limit' => '30M/30M', 'price' => 550,
@@ -176,6 +182,25 @@ class AdminPanelTest extends TestCase
 
         $this->actingAs($operator)->get(route('customers.index'))
             ->assertOk()->assertSee('Own Branch Customer')->assertDontSee('Other Branch Customer');
+        $this->actingAs($operator)->get(route('customers.create'))
+            ->assertOk()
+            ->assertDontSee('name="router_id"', false)
+            ->assertDontSee('Choose router');
+        Http::fake();
+        $this->actingAs($operator)->post(route('customers.store'), [
+            'router_id' => $otherRouter->id,
+            'package_id' => $package->id,
+            'branch_id' => $ownBranch->id,
+            'name' => 'Operator Created Customer',
+            'username' => 'operator-created-customer',
+            'password' => 'password',
+            'status' => 'active',
+        ])->assertRedirect(route('customers.index'));
+        $this->assertDatabaseHas('customers', [
+            'username' => 'operator-created-customer',
+            'branch_id' => $ownBranch->id,
+            'router_id' => $router->id,
+        ]);
         $this->actingAs($operator)->get(route('customers.edit', $otherCustomer))->assertForbidden();
         $this->actingAs($operator)->post(route('customers.store'), [
             'router_id' => $router->id, 'package_id' => $package->id,

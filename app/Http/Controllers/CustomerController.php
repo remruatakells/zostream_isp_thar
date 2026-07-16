@@ -41,13 +41,18 @@ class CustomerController extends Controller
 
     public function create(): View
     {
+        $operatorBranch = request()->user()->isBranchOperator()
+            ? Branch::with(['packages:id', 'router:id,name,is_active'])->find(request()->user()->branch_id)
+            : null;
+
         return view('customers.form', [
             'customer' => new Customer,
             'routers' => Router::where('is_active', true)->get(),
             'packages' => Package::where('is_active', true)->get(),
             'branches' => request()->user()->isBranchOperator()
-                ? Branch::with('packages:id')->whereKey(request()->user()->branch_id)->get()
+                ? collect([$operatorBranch])->filter()
                 : Branch::with('packages:id')->where('is_active', true)->orderBy('name')->get(),
+            'operatorBranch' => $operatorBranch,
         ]);
     }
 
@@ -364,11 +369,13 @@ class CustomerController extends Controller
     private function validated(Request $request, ?Customer $customer = null): array
     {
         $data = $request->validate([
-            'router_id' => array_values(array_filter([
-                'required',
-                'exists:routers,id',
-                $customer ? Rule::in([$customer->router_id]) : null,
-            ])),
+            'router_id' => $request->user()->isBranchOperator()
+                ? ['nullable']
+                : array_values(array_filter([
+                    'required',
+                    'exists:routers,id',
+                    $customer ? Rule::in([$customer->router_id]) : null,
+                ])),
             'package_id' => ['required', 'exists:packages,id'],
             'name' => ['required', 'string', 'max:150'],
             'phone' => ['nullable', 'string', 'max:30'],
@@ -389,6 +396,18 @@ class CustomerController extends Controller
 
         if ($request->user()->isBranchOperator()) {
             $data['branch_id'] = $request->user()->branch_id;
+            if ($customer) {
+                $data['router_id'] = $customer->router_id;
+
+                return $data;
+            }
+            $branch = Branch::with('router')->find($request->user()->branch_id);
+            if (! $branch?->router_id || ! $branch->router?->is_active) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'router_id' => 'Your branch does not have an active default router. Ask an administrator to assign one.',
+                ]);
+            }
+            $data['router_id'] = $branch->router_id;
         }
         if (! empty($data['branch_id'])) {
             $branch = Branch::with('packages:id')->find($data['branch_id']);

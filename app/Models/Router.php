@@ -31,4 +31,9 @@ class Router extends Model
     {
         return $this->hasMany(Customer::class);
     }
+
+    public function branches(): HasMany
+    {
+        return $this->hasMany(Branch::class);
+    }
 }
