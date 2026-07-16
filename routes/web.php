@@ -45,5 +45,7 @@ Route::middleware(['auth', 'active.user'])->group(function () {
     Route::post('/customers/{customer}/toggle', [CustomerController::class, 'toggle'])->name('customers.toggle');
     Route::resource('customers', CustomerController::class)->except('show');
 
+    Route::post('/payments/checkout', [PaymentController::class, 'checkout'])->name('payments.checkout');
+    Route::post('/payments/razorpay/complete', [PaymentController::class, 'completeRazorpay'])->name('payments.razorpay.complete');
     Route::resource('payments', PaymentController::class)->only(['index', 'store', 'destroy']);
 });

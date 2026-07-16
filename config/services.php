@@ -39,4 +39,12 @@ return [
         'token' => env('ISP_API_TOKEN'),
     ],
 
+    'zostream_subscription' => [
+        'base_url' => env('ZOSTREAM_EXTERNAL_API_URL', 'https://apis.zostream.in'),
+        'api_key' => env('ZOSTREAM_EXTERNAL_API_KEY'),
+        'environment' => env('ZOSTREAM_RAZORPAY_ENV', 'SANDBOX'),
+        'razorpay_secret' => env('ZOSTREAM_RAZORPAY_KEY_SECRET'),
+        'source_name' => env('ZOSTREAM_PAYMENT_SOURCE', 'zostream-isp-panel'),
+    ],
+
 ];

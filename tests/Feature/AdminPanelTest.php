@@ -6,6 +6,7 @@ use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\Package;
 use App\Models\Payment;
+use App\Models\PaymentCheckout;
 use App\Models\Router;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -781,6 +782,103 @@ class AdminPanelTest extends TestCase
         $this->assertDatabaseHas('radcheck', [
             'username' => 'renew-user', 'attribute' => 'Cleartext-Password', 'value' => 'password',
         ]);
+    }
+
+    public function test_razorpay_checkout_uses_package_amount_and_records_only_a_verified_payment(): void
+    {
+        config()->set('services.zostream_subscription.api_key', 'external-api-key');
+        config()->set('services.zostream_subscription.environment', 'SANDBOX');
+        config()->set('services.zostream_subscription.razorpay_secret', 'razorpay-secret');
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Razorpay Router', 'host' => '10.77.0.21', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Razorpay Package', 'mikrotik_profile' => 'razorpay-package',
+            'rate_limit' => '30M/30M', 'price' => 499,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $customer = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'name' => 'Razorpay Customer', 'phone' => '9876543210',
+            'username' => 'razorpay-user', 'password' => 'password',
+            'status' => 'suspended', 'expires_at' => today()->subDay(),
+        ]);
+        Http::fake(function (Request $request) {
+            if (str_contains($request->url(), '/api/v3.0/external/subscription-history')) {
+                return Http::response([
+                    'status' => 'success',
+                    'message' => 'Histories created.',
+                    'razorpay_key_id' => 'rzp_test_example',
+                    'razorpay_order' => [
+                        'id' => 'order_test_499',
+                        'amount' => 49900,
+                        'currency' => 'INR',
+                        'status' => 'created',
+                    ],
+                    'data' => [],
+                ]);
+            }
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/profile')) {
+                return Http::response([['.id' => '*1', 'name' => 'razorpay-package']]);
+            }
+            if ($request->method() === 'GET' && str_contains($request->url(), '/rest/ppp/active')) {
+                return Http::response([]);
+            }
+
+            return Http::response([]);
+        });
+
+        $checkoutResponse = $this->actingAs($user)->postJson(route('payments.checkout'), [
+            'customer_id' => $customer->id,
+            'amount' => 1,
+            'renew' => true,
+        ])->assertOk()
+            ->assertJsonPath('amount', 49900)
+            ->assertJsonPath('order_id', 'order_test_499');
+        $checkout = PaymentCheckout::findOrFail($checkoutResponse->json('checkout_id'));
+        $this->assertSame('499.00', $checkout->amount);
+        $this->assertDatabaseCount('payments', 0);
+        Http::assertSent(fn (Request $request) =>
+            str_contains($request->url(), '/api/v3.0/external/subscription-history')
+            && $request->hasHeader('X-Api-Key', 'external-api-key')
+            && $request->hasHeader('X-RZ-Env', 'SANDBOX')
+            && $request['phone_number'] === '9876543210'
+            && (float) $request['amount'] === 499.0
+        );
+
+        $this->actingAs($user)->postJson(route('payments.razorpay.complete'), [
+            'checkout_id' => $checkout->id,
+            'razorpay_order_id' => 'order_test_499',
+            'razorpay_payment_id' => 'pay_invalid',
+            'razorpay_signature' => 'invalid-signature',
+        ])->assertUnprocessable();
+        $this->assertDatabaseCount('payments', 0);
+
+        $paymentId = 'pay_verified_499';
+        $signature = hash_hmac('sha256', 'order_test_499|'.$paymentId, 'razorpay-secret');
+        $this->actingAs($user)->postJson(route('payments.razorpay.complete'), [
+            'checkout_id' => $checkout->id,
+            'razorpay_order_id' => 'order_test_499',
+            'razorpay_payment_id' => $paymentId,
+            'razorpay_signature' => $signature,
+        ])->assertOk()->assertJsonPath('message', 'Razorpay payment verified and recorded.');
+
+        $this->assertDatabaseHas('payments', [
+            'customer_id' => $customer->id,
+            'amount' => 499,
+            'method' => 'razorpay',
+            'reference' => $paymentId,
+        ]);
+        $this->assertDatabaseHas('payment_checkouts', [
+            'id' => $checkout->id,
+            'status' => 'paid',
+            'razorpay_payment_id' => $paymentId,
+        ]);
+        $this->assertSame('active', $customer->fresh()->status);
+        $this->assertSame(today()->addDays(30)->toDateString(), $customer->fresh()->expires_at->toDateString());
     }
 
     public function test_admin_can_import_a_jaze_all_users_csv_with_automatic_package_mapping(): void
