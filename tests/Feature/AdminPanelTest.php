@@ -235,8 +235,40 @@ class AdminPanelTest extends TestCase
             'rate_limit' => '30M/30M', 'price' => 550,
             'validity_days' => 30, 'is_active' => true,
         ]);
+        $otherPackage = Package::create([
+            'name' => 'Other Branch Package', 'mikrotik_profile' => 'other-branch-package',
+            'rate_limit' => '50M/50M', 'price' => 750,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $this->actingAs($user)->put(route('branches.update', $branch), [
+            'name' => 'Ngopa Main',
+            'operator_percentage' => 40,
+            'package_ids' => [$package->id],
+            'is_active' => '1',
+        ])->assertRedirect()->assertSessionHas('success');
+        $this->assertDatabaseHas('branch_package', [
+            'branch_id' => $branch->id,
+            'package_id' => $package->id,
+        ]);
+        $this->assertDatabaseMissing('branch_package', [
+            'branch_id' => $branch->id,
+            'package_id' => $otherPackage->id,
+        ]);
         $this->actingAs($user)->get(route('customers.create'))
-            ->assertOk()->assertSee('name="branch_id"', false)->assertSee('Ngopa Main');
+            ->assertOk()
+            ->assertSee('name="branch_id"', false)
+            ->assertSee('data-package-ids', false)
+            ->assertSee('Ngopa Main');
+
+        $this->actingAs($user)->post(route('customers.store'), [
+            'router_id' => $router->id,
+            'package_id' => $otherPackage->id,
+            'branch_id' => $branch->id,
+            'name' => 'Invalid Branch Package',
+            'username' => 'invalid-branch-package',
+            'password' => 'password',
+            'status' => 'active',
+        ])->assertSessionHasErrors('package_id');
 
         Customer::create([
             'router_id' => $router->id, 'package_id' => $package->id,

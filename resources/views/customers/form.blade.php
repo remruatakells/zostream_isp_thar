@@ -8,13 +8,13 @@
     @if($customer->exists)<input type="hidden" name="return_to" value="{{ old('return_to', $returnTo ?? route('customers.index')) }}">@endif
     <label>Full name<input name="name" value="{{ old('name', $customer->name) }}" required placeholder="Customer name"></label>
     <label>Phone<input name="phone" value="{{ old('phone', $customer->phone) }}" placeholder="+91..."></label>
-    <label>Branch<select name="branch_id" @disabled(auth()->user()->isBranchOperator())><option value="">No branch</option>@foreach($branches as $branch)<option value="{{ $branch->id }}" @selected((string) old('branch_id', $customer->branch_id ?: auth()->user()->branch_id) === (string) $branch->id)>{{ $branch->name }}</option>@endforeach</select>@if(auth()->user()->isBranchOperator())<input type="hidden" name="branch_id" value="{{ auth()->user()->branch_id }}"><small class="form-help">Your account is restricted to this branch.</small>@else<small class="form-help">Add or manage choices from the Branches menu.</small>@endif</label>
+    <label>Branch<select id="customerBranch" name="branch_id" @disabled(auth()->user()->isBranchOperator())><option value="" data-package-ids="[]">No branch</option>@foreach($branches as $branch)<option value="{{ $branch->id }}" data-package-ids='@json($branch->packages->pluck("id")->values())' @selected((string) old('branch_id', $customer->branch_id ?: auth()->user()->branch_id) === (string) $branch->id)>{{ $branch->name }}</option>@endforeach</select>@if(auth()->user()->isBranchOperator())<input type="hidden" name="branch_id" value="{{ auth()->user()->branch_id }}"><small class="form-help">Your account is restricted to this branch.</small>@else<small class="form-help">Package choices change according to the selected branch.</small>@endif</label>
     @if($customer->exists)
         <label>Router<select disabled><option>{{ $customer->router->name }}</option></select><input type="hidden" name="router_id" value="{{ $customer->router_id }}"><small class="form-help">A synced customer cannot be moved silently to another router.</small></label>
     @else
         <label>Router<select name="router_id" required><option value="">Choose router</option>@foreach($routers as $router)<option value="{{ $router->id }}" @selected(old('router_id') == $router->id)>{{ $router->name }}</option>@endforeach</select></label>
     @endif
-    <label>Package<select name="package_id" required><option value="">Choose package</option>@foreach($packages as $package)<option value="{{ $package->id }}" @selected(old('package_id', $customer->package_id) == $package->id)>{{ $package->name }} · ₹{{ number_format($package->price, 0) }}</option>@endforeach</select></label>
+    <label>Package<select id="customerPackage" name="package_id" required><option value="">Choose package</option>@foreach($packages as $package)<option value="{{ $package->id }}" @selected(old('package_id', $customer->package_id) == $package->id)>{{ $package->name }} · ₹{{ number_format($package->price, 0) }}</option>@endforeach</select><small id="packageAvailability" class="form-help"></small></label>
     @if($customer->exists)
         <label>PPPoE username<input value="{{ $customer->username }}" disabled><input type="hidden" name="username" value="{{ $customer->username }}"><small class="form-help">The PPPoE identity is locked to prevent an orphan secret on MikroTik. Delete and recreate the customer to change it.</small></label>
     @else
@@ -27,3 +27,32 @@
     <div class="form-actions"><a class="button secondary" href="{{ $customer->exists ? ($returnTo ?? route('customers.index')) : route('customers.index') }}">Cancel</a><button class="button primary" @disabled($routers->isEmpty() || $packages->isEmpty())>Save & sync</button></div>
 </form>
 @endsection
+@push('scripts')
+<script>
+(() => {
+    const branch = document.getElementById('customerBranch');
+    const packageSelect = document.getElementById('customerPackage');
+    const help = document.getElementById('packageAvailability');
+    if (!branch || !packageSelect) return;
+    const filterPackages = () => {
+        const option = branch.selectedOptions[0];
+        const allowed = JSON.parse(option?.dataset.packageIds || '[]').map(String);
+        const unrestricted = allowed.length === 0;
+        let visible = 0;
+        [...packageSelect.options].forEach((item, index) => {
+            if (index === 0) return;
+            const show = unrestricted || allowed.includes(item.value);
+            item.hidden = !show;
+            item.disabled = !show;
+            if (show) visible++;
+        });
+        if (packageSelect.selectedOptions[0]?.disabled) packageSelect.value = '';
+        help.textContent = unrestricted
+            ? 'All active packages are available for this branch.'
+            : `${visible} package${visible === 1 ? '' : 's'} available for ${option.textContent.trim()}.`;
+    };
+    branch.addEventListener('change', filterPackages);
+    filterPackages();
+})();
+</script>
+@endpush

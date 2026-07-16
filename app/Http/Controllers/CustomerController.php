@@ -46,8 +46,8 @@ class CustomerController extends Controller
             'routers' => Router::where('is_active', true)->get(),
             'packages' => Package::where('is_active', true)->get(),
             'branches' => request()->user()->isBranchOperator()
-                ? Branch::whereKey(request()->user()->branch_id)->get()
-                : Branch::where('is_active', true)->orderBy('name')->get(),
+                ? Branch::with('packages:id')->whereKey(request()->user()->branch_id)->get()
+                : Branch::with('packages:id')->where('is_active', true)->orderBy('name')->get(),
         ]);
     }
 
@@ -67,8 +67,8 @@ class CustomerController extends Controller
             'routers' => Router::where('is_active', true)->get(),
             'packages' => Package::where('is_active', true)->get(),
             'branches' => $request->user()->isBranchOperator()
-                ? Branch::whereKey($request->user()->branch_id)->get()
-                : Branch::where('is_active', true)
+                ? Branch::with('packages:id')->whereKey($request->user()->branch_id)->get()
+                : Branch::with('packages:id')->where('is_active', true)
                     ->when($customer->branch_id, fn ($query) => $query->orWhere('id', $customer->branch_id))
                     ->orderBy('name')->get(),
             'returnTo' => $this->customerIndexReturnUrl($request),
@@ -389,6 +389,14 @@ class CustomerController extends Controller
 
         if ($request->user()->isBranchOperator()) {
             $data['branch_id'] = $request->user()->branch_id;
+        }
+        if (! empty($data['branch_id'])) {
+            $branch = Branch::with('packages:id')->find($data['branch_id']);
+            if ($branch && $branch->packages->isNotEmpty() && ! $branch->packages->contains((int) $data['package_id'])) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'package_id' => 'The selected package is not available for this branch.',
+                ]);
+            }
         }
 
         return $data;

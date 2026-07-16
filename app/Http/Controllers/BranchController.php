@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Branch;
+use App\Models\Package;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -13,20 +14,25 @@ class BranchController extends Controller
     public function index(): View
     {
         return view('branches.index', [
-            'branches' => Branch::withCount('customers')->orderBy('name')->get(),
+            'branches' => Branch::with('packages:id,name')->withCount('customers')->orderBy('name')->get(),
+            'packages' => Package::where('is_active', true)->orderBy('name')->get(),
         ]);
     }
 
     public function store(Request $request): RedirectResponse
     {
-        Branch::create($this->validated($request));
+        [$data, $packageIds] = $this->validated($request);
+        $branch = Branch::create($data);
+        $branch->packages()->sync($packageIds);
 
         return back()->with('success', 'Branch added successfully.');
     }
 
     public function update(Request $request, Branch $branch): RedirectResponse
     {
-        $branch->update($this->validated($request, $branch));
+        [$data, $packageIds] = $this->validated($request, $branch);
+        $branch->update($data);
+        $branch->packages()->sync($packageIds);
 
         return back()->with('success', 'Branch updated successfully.');
     }
@@ -47,10 +53,16 @@ class BranchController extends Controller
 
     private function validated(Request $request, ?Branch $branch = null): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'name' => ['required', 'string', 'max:100', Rule::unique('branches', 'name')->ignore($branch)],
             'operator_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'package_ids' => ['nullable', 'array'],
+            'package_ids.*' => ['integer', 'distinct', 'exists:packages,id'],
             'is_active' => ['nullable', 'boolean'],
-        ]) + ['is_active' => $request->boolean('is_active')];
+        ]);
+        $packageIds = $data['package_ids'] ?? [];
+        unset($data['package_ids']);
+
+        return [$data + ['is_active' => $request->boolean('is_active')], $packageIds];
     }
 }
