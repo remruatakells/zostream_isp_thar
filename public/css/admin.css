@@ -134,3 +134,32 @@
 @media(max-width:1100px){.branches-hero{align-items:flex-start;flex-direction:column}.branches-summary{width:100%;min-width:0}.branch-card-grid{grid-template-columns:1fr}.branch-package-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:760px){.branches-hero{padding:23px 20px}.branches-hero h2{font-size:23px}.branches-summary>div{padding:12px}.branches-summary strong{font-size:19px}.branch-create-card{padding:20px;border-radius:15px}.branch-form-section{grid-template-columns:1fr;gap:15px}.branch-fields{grid-template-columns:1fr}.branch-package-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.branch-create-footer{align-items:stretch;flex-direction:column}.branch-submit{width:100%}.branch-card-fields{grid-template-columns:1fr 1fr}.branch-card-fields .branch-field:first-child{grid-column:1/-1}.branch-list-heading{align-items:flex-start}.branch-card:hover{transform:none}}
 @media(max-width:430px){.branches-summary{grid-template-columns:1fr}.branches-summary>div{display:flex;align-items:center;justify-content:space-between;border-right:0;border-bottom:1px solid rgba(255,255,255,.15)}.branches-summary>div:last-child{border-bottom:0}.branches-summary strong{margin:0}.branch-package-grid,.branch-package-grid.compact{grid-template-columns:1fr 1fr}.branch-package-section .package-title{align-items:flex-start;flex-wrap:wrap}.branch-package-section .package-title .package-tools{width:100%;margin-left:40px}.branch-card-form{padding-left:15px;padding-right:15px}.branch-card-footer{padding-left:15px;padding-right:15px}.branch-card-header{align-items:flex-start;flex-wrap:wrap}.branch-state{margin-left:53px}.branch-card-fields{grid-template-columns:1fr}.branch-card-fields .branch-field:first-child{grid-column:auto}}
+
+/* Branch typography — keep controls readable on desktop and mobile */
+.branches-hero-copy>span,.branch-section-heading>div>span,.branch-list-heading>div>span{font-size:11px}
+.branches-hero p{font-size:14px;line-height:1.55}
+.branches-summary small{font-size:11px}
+.branch-section-heading h3,.branch-list-heading h3{font-size:21px}
+.branch-section-heading p,.branch-list-heading p{font-size:14px;line-height:1.5}
+.branch-form-section-title>span{font-size:11px}
+.branch-form-section-title strong{font-size:15px}
+.branch-form-section-title small{font-size:12px;line-height:1.5}
+.branch-field>span{font-size:13px}
+.branch-field>small{font-size:11px;line-height:1.5}
+.branch-field input,.branch-field select,.branch-card-title input{font-size:14px}
+.package-tools button{font-size:11px}
+.branch-package-option strong{font-size:13px}
+.branch-package-option small{font-size:11px}
+.package-selection-note>span,.package-selection-note small{font-size:11px}
+.branch-status-toggle strong{font-size:13px}
+.branch-status-toggle small{font-size:11px}
+.branch-list-count{font-size:12px}
+.branch-card-title input{font-size:17px}
+.branch-card-title>span{font-size:11px}
+.branch-state{font-size:11px}
+.branch-card-fields .branch-field input,.branch-card-fields .branch-field select{font-size:13px}
+.branch-package-card-head strong{font-size:13px}
+.branch-package-card-head small,.branch-all-packages-note{font-size:10px}
+.branch-card-footer .button,.branch-delete-button{font-size:12px}
+.branch-empty-card strong{font-size:17px}
+.branch-empty-card p{font-size:13px}
