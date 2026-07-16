@@ -1085,6 +1085,40 @@ class AdminPanelTest extends TestCase
         ]);
     }
 
+    public function test_session_history_maps_wis_special_20m_to_the_zostream_starter_package(): void
+    {
+        $user = User::factory()->create();
+        $router = Router::create([
+            'name' => 'Special Plan Router', 'host' => '10.77.0.31', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $starter = Package::create([
+            'name' => 'Starter', 'mikrotik_profile' => 'zostream-starter',
+            'rate_limit' => '20M/20M', 'price' => 450,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $csv = implode("\n", [
+            '"A/C No",Branch,Username,Name,Mobile,"Start Time","Online Time","Running Package","NAS IP","Nas Port Id",SessionId,Protocal',
+            '1,Pawlrang,SPECIAL001,"Special User",9000000001,"16/07/2026 10:00","5 m",WIS_SPECIAL_20M,103.168.75.46,ether1,special-session,PPPOE',
+        ]);
+
+        $this->actingAs($user)->post(route('customers.import.store'), [
+            'router_id' => $router->id,
+            'file' => UploadedFile::fake()->createWithContent('user_session_history.csv', $csv),
+            'duplicate_action' => 'update',
+        ])->assertRedirect(route('customers.import.create'))
+            ->assertSessionHas('success', 'Session history import complete — 1 sessions imported, 1 customers created, 0 updated, 0 skipped.');
+
+        $customer = Customer::where('username', 'SPECIAL001')->firstOrFail();
+        $this->assertSame($starter->id, $customer->package_id);
+        $this->assertSame('Pawlrang', $customer->branch?->name);
+        $this->assertDatabaseHas('branch_package', [
+            'branch_id' => $customer->branch_id,
+            'package_id' => $starter->id,
+        ]);
+    }
+
     public function test_jaze_import_stops_before_writing_when_sub_plan_has_no_matching_active_package(): void
     {
         $user = User::factory()->create();

@@ -26,6 +26,10 @@ class CustomerImportController extends Controller
 {
     private const MAX_ROWS = 1000;
 
+    private const PACKAGE_ALIASES = [
+        'wis_special_20m' => 'zostream-starter',
+    ];
+
     private const HEADER_ALIASES = [
         'name' => 'name',
         'full_name' => 'name',
@@ -166,7 +170,9 @@ class CustomerImportController extends Controller
             $availableProfiles = $packages->pluck('mikrotik_profile')
                 ->map(fn (string $value) => Str::lower(trim($value)));
             $missingProfiles = $requiredProfiles->reject(
-                fn (string $value) => $availableProfiles->contains(Str::lower($value))
+                fn (string $value) => $availableProfiles->contains(
+                    $this->packageProfileForReference($value)
+                )
             );
             if ($missingProfiles->isNotEmpty()) {
                 return back()->withInput()->withErrors([
@@ -469,9 +475,10 @@ class CustomerImportController extends Controller
 
         $reference = trim((string) ($row['package_reference'] ?? ''));
         $group = trim((string) ($row['package_group'] ?? ''));
+        $profileReference = $this->packageProfileForReference($reference);
         $package = $packages->first(
             fn (Package $candidate) => $reference !== ''
-                && Str::lower($candidate->mikrotik_profile) === Str::lower($reference)
+                && Str::lower($candidate->mikrotik_profile) === $profileReference
         );
         $package ??= $packages->first(
             fn (Package $candidate) => $reference === '' && $group !== ''
@@ -632,11 +639,12 @@ class CustomerImportController extends Controller
             ?? $row['session_base_package_reference']
             ?? ''
         ));
+        $profileReference = $this->packageProfileForReference($reference);
         $referenceTokens = $this->planTokens($reference);
 
         $package = $packages->first(fn (Package $candidate) => $reference !== '' && (
             Str::lower(trim($candidate->name)) === Str::lower($reference)
-            || Str::lower(trim($candidate->mikrotik_profile)) === Str::lower($reference)
+            || Str::lower(trim($candidate->mikrotik_profile)) === $profileReference
         ));
         $package ??= $packages->first(function (Package $candidate) use ($referenceTokens): bool {
             $nameTokens = $this->planTokens($candidate->name);
@@ -653,6 +661,18 @@ class CustomerImportController extends Controller
 
         $label = $reference !== '' ? "Running Package '{$reference}'" : 'the blank Running Package';
         throw new \InvalidArgumentException("no active admin package matches {$label}. Choose a Default package and import again.");
+    }
+
+    private function packageProfileForReference(string $reference): string
+    {
+        $normalized = Str::of($reference)
+            ->trim()
+            ->lower()
+            ->replaceMatches('/[^a-z0-9]+/', '_')
+            ->trim('_')
+            ->toString();
+
+        return self::PACKAGE_ALIASES[$normalized] ?? Str::lower(trim($reference));
     }
 
     private function planTokens(string $value): array
