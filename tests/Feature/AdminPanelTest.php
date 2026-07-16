@@ -185,7 +185,25 @@ class AdminPanelTest extends TestCase
         ]);
 
         $this->actingAs($operator)->get(route('customers.index'))
-            ->assertOk()->assertSee('Own Branch Customer')->assertDontSee('Other Branch Customer');
+            ->assertOk()
+            ->assertSee('Own Branch Customer')
+            ->assertDontSee('Other Branch Customer')
+            ->assertDontSee('name="router_id"', false)
+            ->assertDontSee('name="branch_id"', false)
+            ->assertDontSee('Operator Package')
+            ->assertDontSee('Operator Router')
+            ->assertDontSee(route('customers.sync', $ownCustomer), false);
+        $this->actingAs($operator)->get(route('customers.edit', $ownCustomer))
+            ->assertOk()
+            ->assertSee('Operator Package')
+            ->assertSee('Operator Router')
+            ->assertSee('Expiry date');
+        $this->actingAs($operator)->get(route('customers.index', [
+            'router_id' => $otherRouter->id,
+            'branch_id' => $otherBranch->id,
+        ]))->assertOk()
+            ->assertSee('Own Branch Customer')
+            ->assertDontSee('Other Branch Customer');
         $this->actingAs($operator)->get(route('customers.create'))
             ->assertOk()
             ->assertDontSee('name="router_id"', false)

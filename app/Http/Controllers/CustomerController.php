@@ -32,7 +32,9 @@ class CustomerController extends Controller
 
         return view('customers.index', [
             'customers' => $customers,
-            'routers' => Router::orderBy('name')->get(),
+            'routers' => $request->user()->isBranchOperator()
+                ? Router::whereKey($request->user()->branch?->router_id)->get()
+                : Router::orderBy('name')->get(),
             'branches' => $request->user()->isBranchOperator()
                 ? Branch::whereKey($request->user()->branch_id)->get()
                 : Branch::orderBy('name')->get(),
@@ -272,8 +274,10 @@ class CustomerController extends Controller
                 ->orWhere('phone', 'like', '%'.$request->string('search').'%')
                 ->orWhereHas('branch', fn ($branch) => $branch
                     ->where('name', 'like', '%'.$request->string('search').'%'))))
-            ->when($request->filled('router_id'), fn ($q) => $q->where('router_id', $request->integer('router_id')))
-            ->when($request->filled('branch_id'), fn ($q) => $q->where('branch_id', $request->integer('branch_id')));
+            ->when(! $request->user()?->isBranchOperator() && $request->filled('router_id'), fn ($q) =>
+                $q->where('router_id', $request->integer('router_id')))
+            ->when(! $request->user()?->isBranchOperator() && $request->filled('branch_id'), fn ($q) =>
+                $q->where('branch_id', $request->integer('branch_id')));
     }
 
     private function liveStatusIds(Request $request, MikroTikService $mikrotik): array

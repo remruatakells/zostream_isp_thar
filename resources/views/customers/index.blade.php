@@ -5,7 +5,10 @@
 @section('content')
 @php
     $visibleCustomers = $customers->getCollection();
-    $activeFilters = collect(['search', 'router_id', 'branch_id', 'status'])
+    $filterKeys = auth()->user()->isBranchOperator()
+        ? ['search', 'status']
+        : ['search', 'router_id', 'branch_id', 'status'];
+    $activeFilters = collect($filterKeys)
         ->filter(fn ($key) => request()->filled($key))
         ->count();
 @endphp
@@ -48,29 +51,31 @@
     </div>
 
     <div class="customer-filter-workspace">
-        <form class="customer-filter-form" method="GET">
+        <form class="customer-filter-form {{ auth()->user()->isBranchOperator() ? 'operator-filter' : '' }}" method="GET">
             <label class="customer-search-field">
                 <span aria-hidden="true">⌕</span>
                 <input name="search" value="{{ request('search') }}" placeholder="Search name, phone, username or branch">
             </label>
-            <label>
-                <span>Router</span>
-                <select name="router_id">
-                    <option value="">All routers</option>
-                    @foreach($routers as $router)
-                        <option value="{{ $router->id }}" @selected((string) request('router_id') === (string) $router->id)>{{ $router->name }}</option>
-                    @endforeach
-                </select>
-            </label>
-            <label>
-                <span>Branch</span>
-                <select name="branch_id">
-                    <option value="">All branches</option>
-                    @foreach($branches as $branch)
-                        <option value="{{ $branch->id }}" @selected((string) request('branch_id') === (string) $branch->id)>{{ $branch->name }}</option>
-                    @endforeach
-                </select>
-            </label>
+            @if(auth()->user()->isAdmin())
+                <label>
+                    <span>Router</span>
+                    <select name="router_id">
+                        <option value="">All routers</option>
+                        @foreach($routers as $router)
+                            <option value="{{ $router->id }}" @selected((string) request('router_id') === (string) $router->id)>{{ $router->name }}</option>
+                        @endforeach
+                    </select>
+                </label>
+                <label>
+                    <span>Branch</span>
+                    <select name="branch_id">
+                        <option value="">All branches</option>
+                        @foreach($branches as $branch)
+                            <option value="{{ $branch->id }}" @selected((string) request('branch_id') === (string) $branch->id)>{{ $branch->name }}</option>
+                        @endforeach
+                    </select>
+                </label>
+            @endif
             <label>
                 <span>Status</span>
                 <select name="status">
@@ -89,8 +94,10 @@
         <form class="bulk-sync-form" method="POST" action="{{ route('customers.sync-all') }}" data-confirm="Sync all {{ $customers->total() }} customers matching the current filters to RADIUS?">
             @csrf
             <input type="hidden" name="search" value="{{ request('search') }}">
-            <input type="hidden" name="router_id" value="{{ request('router_id') }}">
-            <input type="hidden" name="branch_id" value="{{ request('branch_id') }}">
+            @if(auth()->user()->isAdmin())
+                <input type="hidden" name="router_id" value="{{ request('router_id') }}">
+                <input type="hidden" name="branch_id" value="{{ request('branch_id') }}">
+            @endif
             <input type="hidden" name="status" value="{{ request('status') }}">
             <button class="customer-sync-all" @disabled($customers->total() === 0)>
                 <i aria-hidden="true">↻</i>
@@ -128,7 +135,7 @@
                 ->map(fn ($part) => mb_strtoupper(mb_substr($part, 0, 1)))
                 ->implode('');
         @endphp
-        <article class="customer-card">
+        <article class="customer-card {{ auth()->user()->isBranchOperator() ? 'operator-customer-card' : '' }}">
             <div class="customer-main">
                 <div class="customer-avatar">{{ $initials ?: '?' }}</div>
                 <div class="customer-identity">
@@ -141,22 +148,24 @@
                 </div>
             </div>
 
-            <div class="customer-plan-block">
-                <small>PACKAGE</small>
-                <strong>{{ $customer->package?->name ?? 'No package' }}</strong>
-                <span>{{ $customer->package?->rate_limit ?: 'Unlimited speed' }}</span>
-            </div>
+            @if(auth()->user()->isAdmin())
+                <div class="customer-plan-block">
+                    <small>PACKAGE</small>
+                    <strong>{{ $customer->package?->name ?? 'No package' }}</strong>
+                    <span>{{ $customer->package?->rate_limit ?: 'Unlimited speed' }}</span>
+                </div>
 
-            <div class="customer-location-block">
-                <div>
-                    <small>ROUTER</small>
-                    <strong>{{ $customer->router?->name ?? 'Not assigned' }}</strong>
+                <div class="customer-location-block">
+                    <div>
+                        <small>ROUTER</small>
+                        <strong>{{ $customer->router?->name ?? 'Not assigned' }}</strong>
+                    </div>
+                    <div>
+                        <small>BRANCH</small>
+                        <strong>{{ $customer->branch?->name ?? 'No branch' }}</strong>
+                    </div>
                 </div>
-                <div>
-                    <small>BRANCH</small>
-                    <strong>{{ $customer->branch?->name ?? 'No branch' }}</strong>
-                </div>
-            </div>
+            @endif
 
             <div class="customer-usage-block">
                 <small>DATA USAGE</small>
@@ -167,11 +176,13 @@
                 <em>{{ $customer->usage_last_at?->diffForHumans() ?? 'No accounting data' }}</em>
             </div>
 
-            <div class="customer-expiry-block">
-                <small>EXPIRY</small>
-                <strong class="{{ $isExpired ? 'is-expired' : '' }}">{{ $customer->expires_at?->format('d M Y') ?? 'No expiry' }}</strong>
-                <span>{{ $customer->last_synced_at ? 'Synced '.$customer->last_synced_at->diffForHumans() : 'Not synced' }}</span>
-            </div>
+            @if(auth()->user()->isAdmin())
+                <div class="customer-expiry-block">
+                    <small>EXPIRY</small>
+                    <strong class="{{ $isExpired ? 'is-expired' : '' }}">{{ $customer->expires_at?->format('d M Y') ?? 'No expiry' }}</strong>
+                    <span>{{ $customer->last_synced_at ? 'Synced '.$customer->last_synced_at->diffForHumans() : 'Not synced' }}</span>
+                </div>
+            @endif
 
             <div class="customer-actions">
                 <a class="customer-action pay" href="{{ route('payments.index', ['customer' => $customer]) }}">
@@ -184,10 +195,12 @@
                         <span>{{ $customer->status === 'active' ? 'Suspend' : 'Activate' }}</span>
                     </button>
                 </form>
-                <form method="POST" action="{{ route('customers.sync', $customer) }}">
-                    @csrf
-                    <button class="customer-action" type="submit"><i aria-hidden="true">↻</i><span>Sync</span></button>
-                </form>
+                @if(auth()->user()->isAdmin())
+                    <form method="POST" action="{{ route('customers.sync', $customer) }}">
+                        @csrf
+                        <button class="customer-action" type="submit"><i aria-hidden="true">↻</i><span>Sync</span></button>
+                    </form>
+                @endif
                 <a class="customer-action" href="{{ route('customers.edit', ['customer' => $customer, 'return_to' => request()->fullUrl()]) }}">
                     <i aria-hidden="true">✎</i><span>Edit</span>
                 </a>
