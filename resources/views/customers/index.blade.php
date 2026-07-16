@@ -1,25 +1,227 @@
 @extends('layouts.admin')
 @section('title', 'Customers')
 @section('eyebrow', 'Subscriber management')
+
 @section('content')
-<div class="page-actions"><div><h2>PPPoE subscribers</h2><p>Create, renew, suspend and sync customer access.</p></div><div class="actions">@if(auth()->user()->isAdmin())<a class="button secondary" href="{{ route('customers.import-mikrotik.create') }}">Import MikroTik</a><a class="button secondary" href="{{ route('customers.import.create') }}">Import Excel</a>@endif<a class="button primary" href="{{ route('customers.create') }}">+ Add customer</a></div></div>
-<div class="filter-bar"><form class="filter-form" method="GET"><input name="search" value="{{ request('search') }}" placeholder="Search name, phone, username or branch"><select name="router_id"><option value="">All routers</option>@foreach($routers as $router)<option value="{{ $router->id }}" @selected((string) request('router_id') === (string) $router->id)>{{ $router->name }}</option>@endforeach</select><select name="branch_id"><option value="">All branches</option>@foreach($branches as $branch)<option value="{{ $branch->id }}" @selected((string) request('branch_id') === (string) $branch->id)>{{ $branch->name }}</option>@endforeach</select><select name="status"><option value="">All statuses</option><option value="active" @selected(request('status') === 'active')>Active</option><option value="online" @selected(request('status') === 'online')>Online</option><option value="offline" @selected(request('status') === 'offline')>Offline</option><option value="expired" @selected(request('status') === 'expired')>Expired</option><option value="suspended" @selected(request('status') === 'suspended')>Suspended</option><option value="unknown" @selected(request('status') === 'unknown')>Unknown / router unreachable</option></select><button class="button secondary">Filter</button></form><form class="bulk-sync-form" method="POST" action="{{ route('customers.sync-all') }}" data-confirm="Sync all {{ $customers->total() }} customers matching the current filters to RADIUS?">@csrf<input type="hidden" name="search" value="{{ request('search') }}"><input type="hidden" name="router_id" value="{{ request('router_id') }}"><input type="hidden" name="branch_id" value="{{ request('branch_id') }}"><input type="hidden" name="status" value="{{ request('status') }}"><button class="button primary" @disabled($customers->total() === 0)>Sync all ({{ $customers->total() }})</button></form></div>
-<article class="panel"><div class="table-wrap"><table><thead><tr><th>Customer</th><th>PPPoE username</th><th>Package</th><th>Router</th><th>Branch</th><th>Usage</th><th>Expires</th><th>Status</th><th></th></tr></thead><tbody>
-@forelse($customers as $customer)<tr>
-    <td><strong>{{ $customer->name }}</strong><small>{{ $customer->phone ?: 'No phone' }}</small></td><td><code>{{ $customer->username }}</code></td><td>{{ $customer->package?->name ?? '—' }}</td><td>{{ $customer->router->name }}</td><td>{{ $customer->branch?->name ?? '—' }}</td>
-    <td><strong>↓ {{ \Illuminate\Support\Number::fileSize($customer->usage_download_bytes, 2) }}</strong><small>↑ {{ \Illuminate\Support\Number::fileSize($customer->usage_upload_bytes, 2) }} · {{ $customer->usage_last_at?->diffForHumans() ?? 'No accounting data' }}</small></td>
-    <td>{{ $customer->expires_at?->format('d M Y') ?? 'No expiry' }}<small>{{ $customer->last_synced_at ? 'Synced '.$customer->last_synced_at->diffForHumans() : 'Not synced' }}</small></td>
-    <td><span class="badge {{ $customer->status === 'active' ? '' : 'off' }}">{{ ucfirst($customer->status) }}</span></td>
-    <td><div class="actions"><a class="button small secondary" href="{{ route('payments.index', ['customer' => $customer]) }}">Pay</a><form method="POST" action="{{ route('customers.toggle', $customer) }}">@csrf<button class="icon-button">{{ $customer->status === 'active' ? 'Suspend' : 'Activate' }}</button></form><form method="POST" action="{{ route('customers.sync', $customer) }}">@csrf<button class="icon-button">Sync</button></form><a class="icon-button" href="{{ route('customers.edit', ['customer' => $customer, 'return_to' => request()->fullUrl()]) }}">Edit</a><form data-confirm="Delete this customer from both the admin panel and RADIUS?" method="POST" action="{{ route('customers.destroy', $customer) }}">@csrf @method('DELETE')<button class="icon-button">Delete</button></form></div></td>
-</tr>@empty<tr><td colspan="9" class="empty">No customer found.</td></tr>@endforelse
-</tbody></table></div></article><div class="pagination">{{ $customers->links() }}</div>
+@php
+    $visibleCustomers = $customers->getCollection();
+    $activeFilters = collect(['search', 'router_id', 'branch_id', 'status'])
+        ->filter(fn ($key) => request()->filled($key))
+        ->count();
+@endphp
+
+<section class="customers-hero">
+    <div class="customers-hero-copy">
+        <span>SUBSCRIBER CONTROL</span>
+        <h2>PPPoE subscribers</h2>
+        <p>Create, renew, suspend and monitor customer access from one familiar workspace.</p>
+    </div>
+    <div class="customers-hero-actions">
+        @if(auth()->user()->isAdmin())
+            <div class="customer-import-menu">
+                <a class="customer-hero-button subtle" href="{{ route('customers.import-mikrotik.create') }}">
+                    <i aria-hidden="true">⇄</i>
+                    <span><small>ROUTER DATA</small>Import MikroTik</span>
+                </a>
+                <a class="customer-hero-button subtle" href="{{ route('customers.import.create') }}">
+                    <i aria-hidden="true">↥</i>
+                    <span><small>SPREADSHEET</small>Import Excel</span>
+                </a>
+            </div>
+        @endif
+        <a class="customer-hero-button primary" href="{{ route('customers.create') }}">
+            <i aria-hidden="true">+</i>
+            <span><small>NEW SUBSCRIBER</small>Add customer</span>
+        </a>
+    </div>
+</section>
+
+<section class="customer-filter-card">
+    <div class="customer-filter-heading">
+        <div>
+            <span>FIND CUSTOMERS</span>
+            <strong>Search and filter</strong>
+        </div>
+        @if($activeFilters)
+            <a href="{{ route('customers.index') }}">Clear {{ $activeFilters }} {{ Str::plural('filter', $activeFilters) }}</a>
+        @endif
+    </div>
+
+    <div class="customer-filter-workspace">
+        <form class="customer-filter-form" method="GET">
+            <label class="customer-search-field">
+                <span aria-hidden="true">⌕</span>
+                <input name="search" value="{{ request('search') }}" placeholder="Search name, phone, username or branch">
+            </label>
+            <label>
+                <span>Router</span>
+                <select name="router_id">
+                    <option value="">All routers</option>
+                    @foreach($routers as $router)
+                        <option value="{{ $router->id }}" @selected((string) request('router_id') === (string) $router->id)>{{ $router->name }}</option>
+                    @endforeach
+                </select>
+            </label>
+            <label>
+                <span>Branch</span>
+                <select name="branch_id">
+                    <option value="">All branches</option>
+                    @foreach($branches as $branch)
+                        <option value="{{ $branch->id }}" @selected((string) request('branch_id') === (string) $branch->id)>{{ $branch->name }}</option>
+                    @endforeach
+                </select>
+            </label>
+            <label>
+                <span>Status</span>
+                <select name="status">
+                    <option value="">All statuses</option>
+                    <option value="active" @selected(request('status') === 'active')>Active</option>
+                    <option value="online" @selected(request('status') === 'online')>Online</option>
+                    <option value="offline" @selected(request('status') === 'offline')>Offline</option>
+                    <option value="expired" @selected(request('status') === 'expired')>Expired</option>
+                    <option value="suspended" @selected(request('status') === 'suspended')>Suspended</option>
+                    <option value="unknown" @selected(request('status') === 'unknown')>Unknown / router unreachable</option>
+                </select>
+            </label>
+            <button class="customer-filter-button" type="submit">Apply filters</button>
+        </form>
+
+        <form class="bulk-sync-form" method="POST" action="{{ route('customers.sync-all') }}" data-confirm="Sync all {{ $customers->total() }} customers matching the current filters to RADIUS?">
+            @csrf
+            <input type="hidden" name="search" value="{{ request('search') }}">
+            <input type="hidden" name="router_id" value="{{ request('router_id') }}">
+            <input type="hidden" name="branch_id" value="{{ request('branch_id') }}">
+            <input type="hidden" name="status" value="{{ request('status') }}">
+            <button class="customer-sync-all" @disabled($customers->total() === 0)>
+                <i aria-hidden="true">↻</i>
+                <span>Sync all <b>{{ $customers->total() }}</b></span>
+            </button>
+        </form>
+    </div>
+</section>
+
+<div class="customer-list-heading">
+    <div>
+        <span>CUSTOMER DIRECTORY</span>
+        <h3>{{ number_format($customers->total()) }} {{ Str::plural('customer', $customers->total()) }}</h3>
+        <p>
+            @if($activeFilters)
+                Showing customers matching the selected filters.
+            @else
+                Manage subscriptions, RADIUS access and usage.
+            @endif
+        </p>
+    </div>
+    <span class="customer-page-count">Page {{ $customers->currentPage() }} of {{ max($customers->lastPage(), 1) }}</span>
+</div>
+
+<section class="customer-card-list">
+    @forelse($customers as $customer)
+        @php
+            $isExpired = $customer->expires_at?->lt(today()) ?? false;
+            $displayStatus = $customer->status === 'suspended'
+                ? 'suspended'
+                : ($isExpired ? 'expired' : $customer->status);
+            $initials = collect(preg_split('/\s+/', trim($customer->name)))
+                ->filter()
+                ->take(2)
+                ->map(fn ($part) => mb_strtoupper(mb_substr($part, 0, 1)))
+                ->implode('');
+        @endphp
+        <article class="customer-card">
+            <div class="customer-main">
+                <div class="customer-avatar">{{ $initials ?: '?' }}</div>
+                <div class="customer-identity">
+                    <div class="customer-name-line">
+                        <h3>{{ $customer->name }}</h3>
+                        <span class="customer-status status-{{ $displayStatus }}"><i></i>{{ ucfirst($displayStatus) }}</span>
+                    </div>
+                    <code>{{ $customer->username }}</code>
+                    <span>{{ $customer->phone ?: 'No phone' }}</span>
+                </div>
+            </div>
+
+            <div class="customer-plan-block">
+                <small>PACKAGE</small>
+                <strong>{{ $customer->package?->name ?? 'No package' }}</strong>
+                <span>{{ $customer->package?->rate_limit ?: 'Unlimited speed' }}</span>
+            </div>
+
+            <div class="customer-location-block">
+                <div>
+                    <small>ROUTER</small>
+                    <strong>{{ $customer->router?->name ?? 'Not assigned' }}</strong>
+                </div>
+                <div>
+                    <small>BRANCH</small>
+                    <strong>{{ $customer->branch?->name ?? 'No branch' }}</strong>
+                </div>
+            </div>
+
+            <div class="customer-usage-block">
+                <small>DATA USAGE</small>
+                <div>
+                    <span class="usage-download"><strong>↓ {{ \Illuminate\Support\Number::fileSize($customer->usage_download_bytes, 2) }}</strong></span>
+                    <span class="usage-upload"><strong>↑ {{ \Illuminate\Support\Number::fileSize($customer->usage_upload_bytes, 2) }}</strong></span>
+                </div>
+                <em>{{ $customer->usage_last_at?->diffForHumans() ?? 'No accounting data' }}</em>
+            </div>
+
+            <div class="customer-expiry-block">
+                <small>EXPIRY</small>
+                <strong class="{{ $isExpired ? 'is-expired' : '' }}">{{ $customer->expires_at?->format('d M Y') ?? 'No expiry' }}</strong>
+                <span>{{ $customer->last_synced_at ? 'Synced '.$customer->last_synced_at->diffForHumans() : 'Not synced' }}</span>
+            </div>
+
+            <div class="customer-actions">
+                <a class="customer-action pay" href="{{ route('payments.index', ['customer' => $customer]) }}">
+                    <i aria-hidden="true">₹</i><span>Pay</span>
+                </a>
+                <form method="POST" action="{{ route('customers.toggle', $customer) }}">
+                    @csrf
+                    <button class="customer-action {{ $customer->status === 'active' ? 'suspend' : 'activate' }}" type="submit">
+                        <i aria-hidden="true">{{ $customer->status === 'active' ? 'Ⅱ' : '▶' }}</i>
+                        <span>{{ $customer->status === 'active' ? 'Suspend' : 'Activate' }}</span>
+                    </button>
+                </form>
+                <form method="POST" action="{{ route('customers.sync', $customer) }}">
+                    @csrf
+                    <button class="customer-action" type="submit"><i aria-hidden="true">↻</i><span>Sync</span></button>
+                </form>
+                <a class="customer-action" href="{{ route('customers.edit', ['customer' => $customer, 'return_to' => request()->fullUrl()]) }}">
+                    <i aria-hidden="true">✎</i><span>Edit</span>
+                </a>
+                <form data-confirm="Delete this customer from both the admin panel and RADIUS?" method="POST" action="{{ route('customers.destroy', $customer) }}">
+                    @csrf
+                    @method('DELETE')
+                    <button class="customer-action delete" type="submit"><i aria-hidden="true">×</i><span>Delete</span></button>
+                </form>
+            </div>
+        </article>
+    @empty
+        <article class="customer-empty-card">
+            <span>♙</span>
+            <strong>No customer found</strong>
+            <p>Try clearing the filters or add a new PPPoE subscriber.</p>
+            @if($activeFilters)
+                <a class="button secondary" href="{{ route('customers.index') }}">Clear filters</a>
+            @else
+                <a class="button primary" href="{{ route('customers.create') }}">+ Add customer</a>
+            @endif
+        </article>
+    @endforelse
+</section>
+
+<div class="pagination customer-pagination">{{ $customers->links() }}</div>
 @endsection
+
 @push('scripts')
 <script>
 (() => {
     const form = document.querySelector('.bulk-sync-form');
     if (!form) return;
     const button = form.querySelector('button');
+    const buttonLabel = button.querySelector('span');
     let afterId = 0;
     let synced = 0;
     let failed = 0;
@@ -49,13 +251,13 @@
                 synced = result.synced_total;
                 failed = result.failed_total;
                 hasMore = result.has_more;
-                button.textContent = `Syncing ${result.processed}/${result.total} · ${failed} failed`;
+                buttonLabel.textContent = `Syncing ${result.processed}/${result.total} · ${failed} failed`;
             }
             window.location.reload();
         } catch (error) {
             running = false;
             button.disabled = false;
-            button.textContent = `Retry sync · ${synced} synced, ${failed} failed`;
+            buttonLabel.textContent = `Retry sync · ${synced} synced, ${failed} failed`;
             console.error(error);
         }
     });
