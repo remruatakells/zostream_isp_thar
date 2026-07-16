@@ -206,6 +206,7 @@ class AdminPanelTest extends TestCase
 
         $this->actingAs($user)->post(route('branches.store'), [
             'name' => 'Ngopa',
+            'operator_percentage' => 35,
             'is_active' => '1',
         ])->assertRedirect()->assertSessionHas('success');
 
@@ -215,9 +216,14 @@ class AdminPanelTest extends TestCase
 
         $this->actingAs($user)->put(route('branches.update', $branch), [
             'name' => 'Ngopa Main',
+            'operator_percentage' => 40,
             'is_active' => '1',
         ])->assertRedirect()->assertSessionHas('success');
-        $this->assertDatabaseHas('branches', ['name' => 'Ngopa Main', 'is_active' => true]);
+        $this->assertDatabaseHas('branches', [
+            'name' => 'Ngopa Main',
+            'operator_percentage' => 40,
+            'is_active' => true,
+        ]);
 
         $router = Router::create([
             'name' => 'Branch Router', 'host' => '10.77.0.20', 'port' => 80,
@@ -738,6 +744,11 @@ class AdminPanelTest extends TestCase
     public function test_payment_renewal_activates_and_syncs_the_customer(): void
     {
         $user = User::factory()->create();
+        $branch = Branch::create([
+            'name' => 'Pawlrang',
+            'operator_percentage' => 40,
+            'is_active' => true,
+        ]);
         $router = Router::create([
             'name' => 'Renew Router', 'host' => '10.77.0.2', 'port' => 80,
             'username' => 'api', 'password' => 'secret',
@@ -750,6 +761,7 @@ class AdminPanelTest extends TestCase
         ]);
         $customer = Customer::create([
             'router_id' => $router->id, 'package_id' => $package->id,
+            'branch_id' => $branch->id,
             'name' => 'Expired Customer', 'username' => 'renew-user',
             'password' => 'password', 'status' => 'suspended',
             'expires_at' => today()->subDay(),
@@ -784,9 +796,9 @@ class AdminPanelTest extends TestCase
             'package_amount' => 500,
             'ott_deduction' => 50,
             'distributable_amount' => 450,
-            'operator_percentage' => 20,
-            'operator_commission' => 90,
-            'amount' => 410,
+            'operator_percentage' => 40,
+            'operator_commission' => 180,
+            'amount' => 320,
         ]);
         $this->assertDatabaseHas('radcheck', [
             'username' => 'renew-user', 'attribute' => 'Cleartext-Password', 'value' => 'password',

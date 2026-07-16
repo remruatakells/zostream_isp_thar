@@ -10,11 +10,14 @@ class Branch extends Model
 {
     use HasFactory;
 
-    protected $fillable = ['name', 'is_active'];
+    protected $fillable = ['name', 'operator_percentage', 'is_active'];
 
     protected function casts(): array
     {
-        return ['is_active' => 'boolean'];
+        return [
+            'operator_percentage' => 'decimal:2',
+            'is_active' => 'boolean',
+        ];
     }
 
     public function customers(): HasMany

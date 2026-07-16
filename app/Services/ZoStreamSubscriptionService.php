@@ -11,7 +11,7 @@ class ZoStreamSubscriptionService
 {
     public function createOrder(Customer $customer): array
     {
-        $customer->loadMissing('package');
+        $customer->loadMissing(['package', 'branch']);
         $apiKey = (string) config('services.zostream_subscription.api_key');
         if ($apiKey === '') {
             throw new RuntimeException('ZOSTREAM_EXTERNAL_API_KEY is not configured.');
@@ -21,7 +21,8 @@ class ZoStreamSubscriptionService
         }
         $packageAmount = (float) $customer->package->price;
         $ottDeduction = max(0, (float) config('services.zostream_subscription.ott_deduction', 50));
-        $operatorPercentage = min(100, max(0, (float) config('services.zostream_subscription.operator_percentage', 20)));
+        $operatorPercentage = min(100, max(0, (float) ($customer->branch?->operator_percentage
+            ?? config('services.zostream_subscription.operator_percentage', 20))));
         $distributableAmount = $packageAmount - $ottDeduction;
         $operatorCommission = $distributableAmount * ($operatorPercentage / 100);
         $wifiShare = $distributableAmount - $operatorCommission;

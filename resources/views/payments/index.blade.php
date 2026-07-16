@@ -11,7 +11,7 @@
     <section class="payment-entry-card">
         <div class="payment-section-head"><span>01</span><div><h3>Customer & payment</h3><p>Choose the subscriber and how the payment was received.</p></div></div>
         <div class="payment-fields">
-            <label class="payment-field full"><span>Customer</span><select id="paymentCustomer" name="customer_id" required><option value="">Search or choose a customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-price="{{ $customer->package?->price }}" data-package="{{ $customer->package?->name }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
+            <label class="payment-field full"><span>Customer</span><select id="paymentCustomer" name="customer_id" required><option value="">Search or choose a customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-price="{{ $customer->package?->price }}" data-package="{{ $customer->package?->name }}" data-branch="{{ $customer->branch?->name }}" data-operator-percentage="{{ $customer->branch?->operator_percentage ?? config('services.zostream_subscription.operator_percentage', 20) }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
             <label class="payment-field"><span>Payment method</span><select id="paymentMethod" name="method"><option value="razorpay">Razorpay online</option><option value="cash">Cash</option><option value="upi">Manual UPI</option><option value="bank">Bank transfer</option><option value="card">Manual card</option></select></label>
             <label class="payment-field"><span>Reference</span><input name="reference" value="{{ old('reference') }}" placeholder="Optional transaction ID"></label>
             <label class="payment-field full"><span>Notes</span><textarea name="notes" placeholder="Add an optional note for this collection">{{ old('notes') }}</textarea></label>
@@ -33,8 +33,8 @@
             <div class="split-line"><span>OTT reserved</span><strong id="summaryOtt">− ₹0</strong></div>
             <div class="split-line muted"><span>Percentage base</span><strong id="summaryDistributable">₹0</strong></div>
             <div class="share-grid">
-                <div><i>OPERATOR</i><strong id="summaryOperator">₹0</strong><small>{{ number_format(config('services.zostream_subscription.operator_percentage', 20), 0) }}% share</small></div>
-                <div><i>ZOSTREAM WIFI</i><strong id="summaryWifi">₹0</strong><small>{{ number_format(100 - config('services.zostream_subscription.operator_percentage', 20), 0) }}% share</small></div>
+                <div><i>OPERATOR</i><strong id="summaryOperator">₹0</strong><small><span id="summaryOperatorPercentage">{{ number_format(config('services.zostream_subscription.operator_percentage', 20), 0) }}</span>% share</small></div>
+                <div><i>ZOSTREAM WIFI</i><strong id="summaryWifi">₹0</strong><small><span id="summaryWifiPercentage">{{ number_format(100 - config('services.zostream_subscription.operator_percentage', 20), 0) }}</span>% share</small></div>
             </div>
             <div class="razorpay-total"><span><small>AMOUNT TO COLLECT</small><strong id="summaryPayable">₹0</strong></span><em>WiFi share + OTT ₹{{ number_format(config('services.zostream_subscription.ott_deduction', 50), 0) }}</em></div>
         </div>
@@ -102,14 +102,15 @@
     const confirmButton = document.getElementById('confirmPaymentButton');
     const csrf = form.querySelector('input[name="_token"]').value;
     const ottDeduction = Number(form.dataset.ottDeduction || 50);
-    const operatorPercentage = Number(form.dataset.operatorPercentage || 20);
-    const wifiPercentage = 100 - operatorPercentage;
+    const defaultOperatorPercentage = Number(form.dataset.operatorPercentage || 20);
     let busy = false;
     const money = value => `₹${Number(value).toLocaleString('en-IN', {minimumFractionDigits: 0, maximumFractionDigits: 2})}`;
 
     const refresh = () => {
         const option = customer.selectedOptions[0];
         const price = Number(option?.dataset.price || 0);
+        const operatorPercentage = Number(option?.dataset.operatorPercentage || defaultOperatorPercentage);
+        const wifiPercentage = 100 - operatorPercentage;
         const distributable = Math.max(0, price - ottDeduction);
         const commission = distributable * (operatorPercentage / 100);
         const wifiShare = distributable - commission;
@@ -130,6 +131,8 @@
             document.getElementById('summaryDistributable').textContent = money(distributable);
             document.getElementById('summaryOperator').textContent = money(commission);
             document.getElementById('summaryWifi').textContent = money(wifiShare);
+            document.getElementById('summaryOperatorPercentage').textContent = operatorPercentage.toLocaleString('en-IN');
+            document.getElementById('summaryWifiPercentage').textContent = wifiPercentage.toLocaleString('en-IN');
             document.getElementById('summaryPayable').textContent = money(razorpayAmount);
         }
         button.querySelector('span').textContent = method.value === 'razorpay' ? 'Pay with Razorpay' : 'Record payment';
@@ -220,6 +223,8 @@
             return;
         }
         const option = customer.selectedOptions[0];
+        const operatorPercentage = Number(option?.dataset.operatorPercentage || defaultOperatorPercentage);
+        const wifiPercentage = 100 - operatorPercentage;
         document.getElementById('confirmCustomer').textContent = option.textContent.trim();
         document.getElementById('confirmPackage').textContent = option.dataset.package || 'No package';
         document.getElementById('confirmPackageAmount').textContent = `₹${Number(packageAmount.value).toLocaleString('en-IN')}`;

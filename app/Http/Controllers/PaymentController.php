@@ -27,8 +27,8 @@ class PaymentController extends Controller
                 ->when($branchId, fn ($query) => $query->whereHas('customer', fn ($query) => $query->where('branch_id', $branchId)))
                 ->latest('paid_at')->paginate(20),
             'customers' => Customer::when($branchId, fn ($query) => $query->where('branch_id', $branchId))
-                ->with('package:id,name,price,validity_days')
-                ->orderBy('name')->get(['id', 'package_id', 'name', 'phone', 'username']),
+                ->with(['package:id,name,price,validity_days', 'branch:id,name,operator_percentage'])
+                ->orderBy('name')->get(['id', 'package_id', 'branch_id', 'name', 'phone', 'username']),
             'selectedCustomer' => $request->integer('customer'),
         ]);
     }
@@ -42,7 +42,7 @@ class PaymentController extends Controller
             'notes' => ['nullable', 'string', 'max:1000'],
             'renew' => ['nullable', 'boolean'],
         ]);
-        $customer = Customer::with(['package', 'router'])->findOrFail($data['customer_id']);
+        $customer = Customer::with(['package', 'router', 'branch'])->findOrFail($data['customer_id']);
         $this->ensureCustomerAccess($request, $customer);
         if (! $customer->package || (float) $customer->package->price <= 0) {
             return back()->withInput()->with('error', 'The selected customer does not have a payable package.');
@@ -86,7 +86,7 @@ class PaymentController extends Controller
             'notes' => ['nullable', 'string', 'max:1000'],
             'renew' => ['nullable', 'boolean'],
         ]);
-        $customer = Customer::with(['package', 'router'])->findOrFail($data['customer_id']);
+        $customer = Customer::with(['package', 'router', 'branch'])->findOrFail($data['customer_id']);
         $this->ensureCustomerAccess($request, $customer);
 
         try {
@@ -256,7 +256,8 @@ class PaymentController extends Controller
     {
         $packageAmount = round((float) ($customer->package?->price ?? 0), 2);
         $ottDeduction = round(max(0, (float) config('services.zostream_subscription.ott_deduction', 50)), 2);
-        $operatorPercentage = round(min(100, max(0, (float) config('services.zostream_subscription.operator_percentage', 20))), 2);
+        $operatorPercentage = round(min(100, max(0, (float) ($customer->branch?->operator_percentage
+            ?? config('services.zostream_subscription.operator_percentage', 20)))), 2);
         $distributableAmount = round($packageAmount - $ottDeduction, 2);
         $commission = round($distributableAmount * ($operatorPercentage / 100), 2);
         $wifiShare = round($distributableAmount - $commission, 2);

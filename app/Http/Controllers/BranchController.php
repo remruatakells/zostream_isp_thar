@@ -49,6 +49,7 @@ class BranchController extends Controller
     {
         return $request->validate([
             'name' => ['required', 'string', 'max:100', Rule::unique('branches', 'name')->ignore($branch)],
+            'operator_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'is_active' => ['nullable', 'boolean'],
         ]) + ['is_active' => $request->boolean('is_active')];
     }
