@@ -366,5 +366,9 @@
 .overview-donut strong,.overview-donut span{display:block}
 .overview-donut strong{font:800 30px 'Manrope'}
 .overview-donut span{margin-top:2px;color:var(--muted);font-size:11px}
+.router-health-panel{margin-top:20px}
+.router-health-panel td{font-size:13px}
+.router-health-panel td strong{font-size:14px}
+.router-health-panel td small{font-size:11px}
 @media(max-width:900px){.overview-chart-card{grid-template-columns:1fr}.overview-donut-wrap{grid-row:1}.overview-donut{width:210px}}
 @media(max-width:600px){.overview-chart-card{padding:22px 18px}.overview-chart-legend{grid-template-columns:1fr}.overview-clickable-stats .stat-card>i{opacity:1;transform:none}.overview-donut{width:185px}}

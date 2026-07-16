@@ -84,7 +84,8 @@ class AdminPanelTest extends TestCase
             ->assertSee(route('customers.index', ['status' => 'expired']), false)
             ->assertSee('SUBSCRIBER DISTRIBUTION')
             ->assertSee('overview-donut', false)
-            ->assertDontSee('Router health');
+            ->assertSee('Router health')
+            ->assertSee('Main POP');
 
         Http::assertSentCount(1);
     }

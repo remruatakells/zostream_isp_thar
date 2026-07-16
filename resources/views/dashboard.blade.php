@@ -108,4 +108,49 @@
         </div>
     </div>
 </section>
+
+<article class="panel overview-section router-health-panel">
+    <div class="panel-head">
+        <div><span>INFRASTRUCTURE</span><h3>Router health</h3></div>
+        @if(auth()->user()->isAdmin())
+            <a href="{{ route('routers.index') }}">Manage routers</a>
+        @endif
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Router</th>
+                    <th>REST status</th>
+                    <th>PPP sessions</th>
+                    <th>Panel online</th>
+                    <th>Valid customers</th>
+                    <th>Last connected</th>
+                </tr>
+            </thead>
+            <tbody>
+                @forelse($routerHealth as $health)
+                    <tr>
+                        <td>
+                            <strong>{{ $health['router']->name }}</strong>
+                            <small>{{ $health['router']->host }}:{{ $health['router']->port }}</small>
+                        </td>
+                        <td>
+                            <span class="badge {{ $health['reachable'] ? '' : 'off' }}">{{ $health['reachable'] ? 'Reachable' : 'Unreachable' }}</span>
+                            @if(!$health['reachable'])
+                                <small title="{{ $health['error'] }}">{{ Illuminate\Support\Str::limit($health['error'], 55) }}</small>
+                            @endif
+                        </td>
+                        <td>{{ $health['sessions'] ?? '—' }}</td>
+                        <td>{{ $health['panel_online'] ?? '—' }}</td>
+                        <td>{{ $health['eligible'] }}</td>
+                        <td>{{ $health['router']->last_connected_at?->diffForHumans() ?? 'Never' }}</td>
+                    </tr>
+                @empty
+                    <tr><td colspan="6" class="empty">No active routers configured.</td></tr>
+                @endforelse
+            </tbody>
+        </table>
+    </div>
+</article>
 @endsection

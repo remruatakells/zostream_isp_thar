@@ -108,6 +108,7 @@ class DashboardController extends Controller
                 'suspended' => $suspended->count(),
                 'unknown' => $unknownIds->count(),
             ],
+            'routerHealth' => $routerHealth,
         ]);
     }
 }
