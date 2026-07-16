@@ -192,6 +192,7 @@ class AdminPanelTest extends TestCase
             ->assertDontSee('name="branch_id"', false)
             ->assertDontSee('Operator Package')
             ->assertDontSee('Operator Router')
+            ->assertDontSee('Sync all')
             ->assertDontSee(route('customers.sync', $ownCustomer), false);
         $this->actingAs($operator)->get(route('customers.edit', $ownCustomer))
             ->assertOk()

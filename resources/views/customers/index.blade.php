@@ -91,19 +91,19 @@
             <button class="customer-filter-button" type="submit">Apply filters</button>
         </form>
 
-        <form class="bulk-sync-form" method="POST" action="{{ route('customers.sync-all') }}" data-confirm="Sync all {{ $customers->total() }} customers matching the current filters to RADIUS?">
-            @csrf
-            <input type="hidden" name="search" value="{{ request('search') }}">
-            @if(auth()->user()->isAdmin())
+        @if(auth()->user()->isAdmin())
+            <form class="bulk-sync-form" method="POST" action="{{ route('customers.sync-all') }}" data-confirm="Sync all {{ $customers->total() }} customers matching the current filters to RADIUS?">
+                @csrf
+                <input type="hidden" name="search" value="{{ request('search') }}">
                 <input type="hidden" name="router_id" value="{{ request('router_id') }}">
                 <input type="hidden" name="branch_id" value="{{ request('branch_id') }}">
-            @endif
-            <input type="hidden" name="status" value="{{ request('status') }}">
-            <button class="customer-sync-all" @disabled($customers->total() === 0)>
-                <i aria-hidden="true">↻</i>
-                <span>Sync all <b>{{ $customers->total() }}</b></span>
-            </button>
-        </form>
+                <input type="hidden" name="status" value="{{ request('status') }}">
+                <button class="customer-sync-all" @disabled($customers->total() === 0)>
+                    <i aria-hidden="true">↻</i>
+                    <span>Sync all <b>{{ $customers->total() }}</b></span>
+                </button>
+            </form>
+        @endif
     </div>
 </section>
 
