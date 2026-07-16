@@ -27,7 +27,7 @@ class PaymentController extends Controller
                 ->when($branchId, fn ($query) => $query->whereHas('customer', fn ($query) => $query->where('branch_id', $branchId)))
                 ->latest('paid_at')->paginate(20),
             'customers' => Customer::when($branchId, fn ($query) => $query->where('branch_id', $branchId))
-                ->with(['package:id,name,price,validity_days', 'branch:id,name,operator_percentage'])
+                ->with(['package:id,name,price,validity_days', 'branch:id,name,operator_percentage,ott_deduction'])
                 ->orderBy('name')->get(['id', 'package_id', 'branch_id', 'name', 'phone', 'username']),
             'selectedCustomer' => $request->integer('customer'),
         ]);
@@ -255,7 +255,8 @@ class PaymentController extends Controller
     private function paymentAmounts(Customer $customer): array
     {
         $packageAmount = round((float) ($customer->package?->price ?? 0), 2);
-        $ottDeduction = round(max(0, (float) config('services.zostream_subscription.ott_deduction', 50)), 2);
+        $ottDeduction = round(max(0, (float) ($customer->branch?->ott_deduction
+            ?? config('services.zostream_subscription.ott_deduction', 50))), 2);
         $operatorPercentage = round(min(100, max(0, (float) ($customer->branch?->operator_percentage
             ?? config('services.zostream_subscription.operator_percentage', 20)))), 2);
         $distributableAmount = round($packageAmount - $ottDeduction, 2);

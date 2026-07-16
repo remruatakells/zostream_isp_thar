@@ -11,7 +11,7 @@
     <section class="payment-entry-card">
         <div class="payment-section-head"><span>01</span><div><h3>Customer & payment</h3><p>Choose the subscriber and how the payment was received.</p></div></div>
         <div class="payment-fields">
-            <label class="payment-field full"><span>Customer</span><select id="paymentCustomer" name="customer_id" required><option value="">Search or choose a customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-price="{{ $customer->package?->price }}" data-package="{{ $customer->package?->name }}" data-branch="{{ $customer->branch?->name }}" data-operator-percentage="{{ $customer->branch?->operator_percentage ?? config('services.zostream_subscription.operator_percentage', 20) }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
+            <label class="payment-field full"><span>Customer</span><select id="paymentCustomer" name="customer_id" required><option value="">Search or choose a customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-price="{{ $customer->package?->price }}" data-package="{{ $customer->package?->name }}" data-branch="{{ $customer->branch?->name }}" data-operator-percentage="{{ $customer->branch?->operator_percentage ?? config('services.zostream_subscription.operator_percentage', 20) }}" data-ott-deduction="{{ $customer->branch?->ott_deduction ?? config('services.zostream_subscription.ott_deduction', 50) }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
             <input id="paymentMethod" type="hidden" name="method" value="razorpay">
             <label class="payment-field full"><span>Notes</span><textarea name="notes" placeholder="Add an optional note for this collection">{{ old('notes') }}</textarea></label>
         </div>
@@ -99,7 +99,7 @@
     const dialog = document.getElementById('paymentConfirmation');
     const confirmButton = document.getElementById('confirmPaymentButton');
     const csrf = form.querySelector('input[name="_token"]').value;
-    const ottDeduction = Number(form.dataset.ottDeduction || 50);
+    const defaultOttDeduction = Number(form.dataset.ottDeduction || 50);
     const defaultOperatorPercentage = Number(form.dataset.operatorPercentage || 20);
     let busy = false;
     const money = value => `₹${Number(value).toLocaleString('en-IN', {minimumFractionDigits: 0, maximumFractionDigits: 2})}`;
@@ -107,6 +107,7 @@
     const refresh = () => {
         const option = customer.selectedOptions[0];
         const price = Number(option?.dataset.price || 0);
+        const ottDeduction = Number(option?.dataset.ottDeduction || defaultOttDeduction);
         const operatorPercentage = Number(option?.dataset.operatorPercentage || defaultOperatorPercentage);
         const wifiPercentage = 100 - operatorPercentage;
         const distributable = Math.max(0, price - ottDeduction);
@@ -220,6 +221,7 @@
             return;
         }
         const option = customer.selectedOptions[0];
+        const ottDeduction = Number(option?.dataset.ottDeduction || defaultOttDeduction);
         const operatorPercentage = Number(option?.dataset.operatorPercentage || defaultOperatorPercentage);
         const wifiPercentage = 100 - operatorPercentage;
         document.getElementById('confirmCustomer').textContent = option.textContent.trim();

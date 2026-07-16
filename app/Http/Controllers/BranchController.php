@@ -56,6 +56,7 @@ class BranchController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:100', Rule::unique('branches', 'name')->ignore($branch)],
             'operator_percentage' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'ott_deduction' => ['nullable', 'numeric', 'min:0'],
             'package_ids' => ['nullable', 'array'],
             'package_ids.*' => ['integer', 'distinct', 'exists:packages,id'],
             'is_active' => ['nullable', 'boolean'],

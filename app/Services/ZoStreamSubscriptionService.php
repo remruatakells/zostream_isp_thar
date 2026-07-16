@@ -20,7 +20,8 @@ class ZoStreamSubscriptionService
             throw new RuntimeException('The customer does not have a payable package.');
         }
         $packageAmount = (float) $customer->package->price;
-        $ottDeduction = max(0, (float) config('services.zostream_subscription.ott_deduction', 50));
+        $ottDeduction = max(0, (float) ($customer->branch?->ott_deduction
+            ?? config('services.zostream_subscription.ott_deduction', 50)));
         $operatorPercentage = min(100, max(0, (float) ($customer->branch?->operator_percentage
             ?? config('services.zostream_subscription.operator_percentage', 20))));
         $distributableAmount = $packageAmount - $ottDeduction;
