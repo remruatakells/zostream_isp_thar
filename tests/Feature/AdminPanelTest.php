@@ -43,7 +43,7 @@ class AdminPanelTest extends TestCase
             ->assertSee('nav-label', false);
     }
 
-    public function test_dashboard_shows_live_offline_and_expired_customer_details(): void
+    public function test_dashboard_shows_clickable_live_status_cards_and_donut_chart(): void
     {
         Cache::flush();
         $user = User::factory()->create();
@@ -79,9 +79,12 @@ class AdminPanelTest extends TestCase
         $this->actingAs($user)->get('/dashboard')
             ->assertOk()
             ->assertSee('Online customers')
-            ->assertSee('Offline Person')
-            ->assertSee('Expired Person')
-            ->assertSee('Main POP');
+            ->assertSee(route('customers.index', ['status' => 'online']), false)
+            ->assertSee(route('customers.index', ['status' => 'offline']), false)
+            ->assertSee(route('customers.index', ['status' => 'expired']), false)
+            ->assertSee('SUBSCRIBER DISTRIBUTION')
+            ->assertSee('overview-donut', false)
+            ->assertDontSee('Router health');
 
         Http::assertSentCount(1);
     }

@@ -83,6 +83,10 @@ class DashboardController extends Controller
         $onlineIds = $onlineIds->unique();
         $offlineIds = $offlineIds->unique();
         $unknownIds = $unknownIds->unique();
+        $suspended = $customers->where('status', 'suspended');
+        $chartExpired = $customers->filter(fn (Customer $customer) =>
+            $customer->status !== 'suspended' && ($customer->expires_at?->lt(today()) ?? false)
+        );
 
         return view('dashboard', [
             'stats' => [
@@ -92,20 +96,18 @@ class DashboardController extends Controller
                 'offline' => $offlineIds->count(),
                 'unknown' => $unknownIds->count(),
                 'expired' => $expired->count(),
-                'suspended' => $customers->where('status', 'suspended')->count(),
+                'suspended' => $suspended->count(),
                 'routers' => $routers->count(),
                 'reachable_routers' => $routerHealth->where('reachable', true)->count(),
                 'revenue' => Payment::whereBetween('paid_at', [now()->startOfMonth(), now()->endOfMonth()])->sum('amount'),
             ],
-            'expiredCustomers' => $expired->sortBy('expires_at')->take(8)->values(),
-            'offlineCustomers' => $customers->whereIn('id', $offlineIds)->sortBy('name')->take(8)->values(),
-            'expiring' => $customers
-                ->filter(fn (Customer $customer) => $customer->expires_at?->between(today(), today()->addDays(7)) ?? false)
-                ->sortBy('expires_at')->take(8)->values(),
-            'routerHealth' => $routerHealth,
-            'payments' => Payment::with('customer')
-                ->when($branchId, fn ($query) => $query->whereHas('customer', fn ($query) => $query->where('branch_id', $branchId)))
-                ->latest('paid_at')->limit(6)->get(),
+            'statusChart' => [
+                'online' => $onlineIds->count(),
+                'offline' => $offlineIds->count(),
+                'expired' => $chartExpired->count(),
+                'suspended' => $suspended->count(),
+                'unknown' => $unknownIds->count(),
+            ],
         ]);
     }
 }
