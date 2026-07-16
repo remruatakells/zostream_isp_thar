@@ -39,6 +39,8 @@ class CustomerImportController extends Controller
         'phone_number' => 'phone',
         'contact' => 'phone',
         'branch' => 'branch',
+        'branch_name' => 'branch',
+        'area' => 'area',
         'address' => 'address',
         'installation_address' => 'address',
         'address_line1' => 'address_line1',
@@ -191,7 +193,7 @@ class CustomerImportController extends Controller
 
             try {
                 $package = $this->packageForRow($row, $packages, $data['package_id'] ?? null, $isJazeImport);
-                $customerData = $this->customerData($row, $router->id, $package->id);
+                $customerData = $this->customerData($row, $router->id, $package);
             } catch (Throwable $e) {
                 $skipped++;
                 $errors[] = "Row {$excelRow}: {$e->getMessage()}";
@@ -326,7 +328,7 @@ class CustomerImportController extends Controller
         return $row;
     }
 
-    private function customerData(array $row, int $routerId, int $packageId): array
+    private function customerData(array $row, int $routerId, Package $package): array
     {
         $username = trim((string) ($row['username'] ?? ''));
         $password = (string) ($row['password'] ?? '');
@@ -372,12 +374,15 @@ class CustomerImportController extends Controller
             )))));
         }
 
+        $branch = $this->branchForRow($row);
+        $this->assignPackageToBranch($branch, $package);
+
         return [
             'router_id' => $routerId,
-            'package_id' => $packageId,
+            'package_id' => $package->id,
             'name' => $name,
             'phone' => filled($row['phone'] ?? null) ? trim((string) $row['phone']) : null,
-            'branch_id' => $this->branchIdForName($row['branch'] ?? null),
+            'branch_id' => $branch?->id,
             'address' => $address !== '' ? $address : null,
             'username' => $username,
             'password' => $password,
@@ -425,6 +430,34 @@ class CustomerImportController extends Controller
             ->first();
 
         return ($branch ?? Branch::create(['name' => $name, 'is_active' => true]))->id;
+    }
+
+    private function branchForRow(array $row): ?Branch
+    {
+        foreach ([
+            $row['branch'] ?? null,
+            $row['installation_address_city'] ?? null,
+            $row['address_city'] ?? null,
+            $row['area'] ?? null,
+        ] as $candidate) {
+            $name = trim((string) $candidate);
+            if ($name === '') {
+                continue;
+            }
+
+            $branchId = $this->branchIdForName($name);
+
+            return $branchId ? Branch::find($branchId) : null;
+        }
+
+        return null;
+    }
+
+    private function assignPackageToBranch(?Branch $branch, Package $package): void
+    {
+        if ($branch) {
+            $branch->packages()->syncWithoutDetaching([$package->id]);
+        }
     }
 
     private function packageForRow(array $row, $packages, mixed $fallbackPackageId, bool $isJazeImport): Package
@@ -514,6 +547,8 @@ class CustomerImportController extends Controller
 
                 if (! $customer) {
                     $package = $this->packageForSessionRow($row, $packages, $fallbackPackage);
+                    $branch = $this->branchForRow($row);
+                    $this->assignPackageToBranch($branch, $package);
                     $customer = Customer::create([
                         'router_id' => $router->id,
                         'package_id' => $package->id,
@@ -521,7 +556,7 @@ class CustomerImportController extends Controller
                         'phone' => filled($row['phone'] ?? null)
                             ? preg_replace('/\s+/', '', trim((string) $row['phone']))
                             : null,
-                        'branch_id' => $this->branchIdForName($row['branch'] ?? null),
+                        'branch_id' => $branch?->id,
                         'address' => null,
                         'username' => $username,
                         'password' => 'password',
@@ -539,8 +574,10 @@ class CustomerImportController extends Controller
                             $customerChanges['phone'] = preg_replace('/\s+/', '', trim((string) $row['phone']));
                         }
                     }
-                    if (filled($row['branch'] ?? null)) {
-                        $customerChanges['branch_id'] = $this->branchIdForName($row['branch']);
+                    $branch = $this->branchForRow($row);
+                    if ($branch) {
+                        $customerChanges['branch_id'] = $branch?->id;
+                        $this->assignPackageToBranch($branch, $customer->package);
                     }
                     if ($customerChanges !== []) {
                         $customer->update($customerChanges);

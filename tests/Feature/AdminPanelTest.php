@@ -988,6 +988,16 @@ class AdminPanelTest extends TestCase
             'status' => 'active',
             'expires_at' => '2026-07-20 00:00:00',
         ]);
+        $aizawl = Branch::where('name', 'Aizawl')->firstOrFail();
+        $this->assertSame($aizawl->id, Customer::where('username', 'ZNET001')->value('branch_id'));
+        $this->assertDatabaseHas('branch_package', [
+            'branch_id' => $aizawl->id,
+            'package_id' => $rookie->id,
+        ]);
+        $this->assertDatabaseHas('branch_package', [
+            'branch_id' => $aizawl->id,
+            'package_id' => $rookie500->id,
+        ]);
         $this->assertDatabaseHas('customers', [
             'username' => 'ZNET002',
             'package_id' => $rookie500->id,
@@ -1059,6 +1069,10 @@ class AdminPanelTest extends TestCase
         $this->assertSame('password', $createdCustomer->password);
         $this->assertSame($package->id, $createdCustomer->package_id);
         $this->assertSame('Ngopa', $createdCustomer->branch?->name);
+        $this->assertDatabaseHas('branch_package', [
+            'branch_id' => $createdCustomer->branch_id,
+            'package_id' => $package->id,
+        ]);
         $this->assertSame('active', $createdCustomer->status);
         $this->assertDatabaseHas('radcheck', [
             'username' => 'UNKNOWN001',
