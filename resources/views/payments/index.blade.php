@@ -7,11 +7,11 @@
     <div class="payment-hero-badge"><i>✓</i><span><strong>Secure checkout</strong><small>Server-verified Razorpay payment</small></span></div>
 </section>
 
-<form id="paymentForm" class="payment-workspace" method="POST" action="{{ route('payments.store') }}" data-checkout-url="{{ route('payments.checkout') }}" data-complete-url="{{ route('payments.razorpay.complete') }}" data-ott-deduction="{{ config('services.zostream_subscription.ott_deduction', 50) }}" data-operator-percentage="{{ config('services.zostream_subscription.operator_percentage', 20) }}">@csrf
+<form id="paymentForm" class="payment-workspace" method="POST" action="{{ route('payments.store') }}" data-checkout-url="{{ route('payments.checkout') }}" data-complete-url="{{ route('payments.razorpay.complete') }}" data-ott-deduction="0" data-operator-percentage="{{ config('services.zostream_subscription.operator_percentage', 20) }}">@csrf
     <section class="payment-entry-card">
         <div class="payment-section-head"><span>01</span><div><h3>Customer & payment</h3><p>Choose the subscriber and how the payment was received.</p></div></div>
         <div class="payment-fields">
-            <label class="payment-field full"><span>Customer</span><select id="paymentCustomer" name="customer_id" required><option value="">Search or choose a customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-price="{{ $customer->package?->price }}" data-package="{{ $customer->package?->name }}" data-branch="{{ $customer->branch?->name }}" data-operator-percentage="{{ $customer->branch?->operator_percentage ?? config('services.zostream_subscription.operator_percentage', 20) }}" data-ott-deduction="{{ $customer->branch?->ott_deduction ?? config('services.zostream_subscription.ott_deduction', 50) }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
+            <label class="payment-field full"><span>Customer</span><select id="paymentCustomer" name="customer_id" required><option value="">Search or choose a customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-price="{{ $customer->package?->price }}" data-package="{{ $customer->package?->name }}" data-branch="{{ $customer->branch?->name }}" data-operator-percentage="{{ $customer->branch?->operator_percentage ?? config('services.zostream_subscription.operator_percentage', 20) }}" data-ott-deduction="{{ $customer->branch?->ott_deduction ?? 0 }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
             <input id="paymentMethod" type="hidden" name="method" value="razorpay">
             <label class="payment-field full"><span>Notes</span><textarea name="notes" placeholder="Add an optional note for this collection">{{ old('notes') }}</textarea></label>
         </div>
@@ -35,7 +35,7 @@
                 <div><i>OPERATOR</i><strong id="summaryOperator">₹0</strong><small><span id="summaryOperatorPercentage">{{ number_format(config('services.zostream_subscription.operator_percentage', 20), 0) }}</span>% share</small></div>
                 <div><i>ZOSTREAM WIFI</i><strong id="summaryWifi">₹0</strong><small><span id="summaryWifiPercentage">{{ number_format(100 - config('services.zostream_subscription.operator_percentage', 20), 0) }}</span>% share</small></div>
             </div>
-            <div class="razorpay-total"><span><small>AMOUNT TO COLLECT</small><strong id="summaryPayable">₹0</strong></span><em>WiFi share + OTT ₹{{ number_format(config('services.zostream_subscription.ott_deduction', 50), 0) }}</em></div>
+            <div class="razorpay-total"><span><small>AMOUNT TO COLLECT</small><strong id="summaryPayable">₹0</strong></span><em>WiFi share + branch OTT, if configured</em></div>
         </div>
         <button id="paymentButton" class="payment-submit" type="submit"><span>Pay with Razorpay</span><i>→</i></button>
         <small class="payment-security">🔒 Amount is recalculated and verified by the server.</small>
@@ -72,7 +72,7 @@
             <div><dt>OTT added back</dt><dd id="confirmOttAdded"></dd></div>
             <div class="total"><dt>Razorpay amount</dt><dd id="confirmPayable"></dd></div>
         </dl>
-        <p class="confirmation-note">OTT ₹{{ number_format(config('services.zostream_subscription.ott_deduction', 50), 0) }} is excluded while calculating the percentages, then added back to the ZoStream WiFi share for Razorpay.</p>
+        <p class="confirmation-note">OTT is excluded only when the selected branch has an OTT deduction configured. Otherwise, percentages are calculated from the full package amount.</p>
         <div class="confirmation-actions">
             <button class="button secondary" value="cancel">Cancel</button>
             <button id="confirmPaymentButton" class="button primary" value="default">Confirm payment</button>
@@ -99,7 +99,7 @@
     const dialog = document.getElementById('paymentConfirmation');
     const confirmButton = document.getElementById('confirmPaymentButton');
     const csrf = form.querySelector('input[name="_token"]').value;
-    const defaultOttDeduction = Number(form.dataset.ottDeduction || 50);
+    const defaultOttDeduction = 0;
     const defaultOperatorPercentage = Number(form.dataset.operatorPercentage || 20);
     let busy = false;
     const money = value => `₹${Number(value).toLocaleString('en-IN', {minimumFractionDigits: 0, maximumFractionDigits: 2})}`;

@@ -255,8 +255,7 @@ class PaymentController extends Controller
     private function paymentAmounts(Customer $customer): array
     {
         $packageAmount = round((float) ($customer->package?->price ?? 0), 2);
-        $ottDeduction = round(max(0, (float) ($customer->branch?->ott_deduction
-            ?? config('services.zostream_subscription.ott_deduction', 50))), 2);
+        $ottDeduction = round(max(0, (float) ($customer->branch?->ott_deduction ?? 0)), 2);
         $operatorPercentage = round(min(100, max(0, (float) ($customer->branch?->operator_percentage
             ?? config('services.zostream_subscription.operator_percentage', 20)))), 2);
         $distributableAmount = round($packageAmount - $ottDeduction, 2);
