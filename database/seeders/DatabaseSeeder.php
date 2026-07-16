@@ -19,6 +19,9 @@ class DatabaseSeeder extends Seeder
         User::updateOrCreate(['email' => env('ADMIN_EMAIL', 'admin@example.com')], [
             'name' => env('ADMIN_NAME', 'ISP Administrator'),
             'password' => env('ADMIN_PASSWORD', 'password'),
+            'role' => 'admin',
+            'branch_id' => null,
+            'is_active' => true,
         ]);
 
         Package::firstOrCreate(['mikrotik_profile' => 'starter-10m'], [

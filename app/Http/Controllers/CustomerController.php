@@ -33,7 +33,9 @@ class CustomerController extends Controller
         return view('customers.index', [
             'customers' => $customers,
             'routers' => Router::orderBy('name')->get(),
-            'branches' => Branch::orderBy('name')->get(),
+            'branches' => $request->user()->isBranchOperator()
+                ? Branch::whereKey($request->user()->branch_id)->get()
+                : Branch::orderBy('name')->get(),
         ]);
     }
 
@@ -43,7 +45,9 @@ class CustomerController extends Controller
             'customer' => new Customer,
             'routers' => Router::where('is_active', true)->get(),
             'packages' => Package::where('is_active', true)->get(),
-            'branches' => Branch::where('is_active', true)->orderBy('name')->get(),
+            'branches' => request()->user()->isBranchOperator()
+                ? Branch::whereKey(request()->user()->branch_id)->get()
+                : Branch::where('is_active', true)->orderBy('name')->get(),
         ]);
     }
 
@@ -56,19 +60,24 @@ class CustomerController extends Controller
 
     public function edit(Request $request, Customer $customer): View
     {
+        $this->ensureCustomerAccess($request, $customer);
+
         return view('customers.form', [
             'customer' => $customer,
             'routers' => Router::where('is_active', true)->get(),
             'packages' => Package::where('is_active', true)->get(),
-            'branches' => Branch::where('is_active', true)
-                ->when($customer->branch_id, fn ($query) => $query->orWhere('id', $customer->branch_id))
-                ->orderBy('name')->get(),
+            'branches' => $request->user()->isBranchOperator()
+                ? Branch::whereKey($request->user()->branch_id)->get()
+                : Branch::where('is_active', true)
+                    ->when($customer->branch_id, fn ($query) => $query->orWhere('id', $customer->branch_id))
+                    ->orderBy('name')->get(),
             'returnTo' => $this->customerIndexReturnUrl($request),
         ]);
     }
 
     public function update(Request $request, Customer $customer, RadiusService $radius): RedirectResponse
     {
+        $this->ensureCustomerAccess($request, $customer);
         $data = $this->validated($request, $customer);
         if (blank($data['password'] ?? null)) {
             unset($data['password']);
@@ -85,6 +94,8 @@ class CustomerController extends Controller
 
     public function destroy(Customer $customer, RadiusService $radius): RedirectResponse
     {
+        $this->ensureCustomerAccess(request(), $customer);
+
         try {
             $removed = $radius->deleteCustomer($customer);
             try {
@@ -108,6 +119,8 @@ class CustomerController extends Controller
 
     public function sync(Customer $customer, RadiusService $radius): RedirectResponse
     {
+        $this->ensureCustomerAccess(request(), $customer);
+
         return $this->syncAndRedirect($customer, $radius, 'Customer');
     }
 
@@ -177,6 +190,8 @@ class CustomerController extends Controller
 
     public function toggle(Customer $customer, RadiusService $radius): RedirectResponse
     {
+        $this->ensureCustomerAccess(request(), $customer);
+
         if ($customer->status === 'suspended' && $customer->expires_at?->lt(today())) {
             return redirect()->route('customers.index')->with(
                 'warning',
@@ -244,6 +259,8 @@ class CustomerController extends Controller
     private function baseCustomerQuery(Request $request): Builder
     {
         return Customer::query()
+            ->when($request->user()?->isBranchOperator(), fn ($query) => $query
+                ->where('branch_id', $request->user()->branch_id))
             ->when($request->filled('search'), fn ($q) => $q->where(fn ($q) => $q
                 ->where('name', 'like', '%'.$request->string('search').'%')
                 ->orWhere('username', 'like', '%'.$request->string('search').'%')
@@ -346,7 +363,7 @@ class CustomerController extends Controller
 
     private function validated(Request $request, ?Customer $customer = null): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'router_id' => array_values(array_filter([
                 'required',
                 'exists:routers,id',
@@ -355,7 +372,9 @@ class CustomerController extends Controller
             'package_id' => ['required', 'exists:packages,id'],
             'name' => ['required', 'string', 'max:150'],
             'phone' => ['nullable', 'string', 'max:30'],
-            'branch_id' => ['nullable', 'exists:branches,id'],
+            'branch_id' => $request->user()->isBranchOperator()
+                ? ['required', Rule::in([$request->user()->branch_id])]
+                : ['nullable', 'exists:branches,id'],
             'address' => ['nullable', 'string', 'max:1000'],
             'username' => [
                 'required',
@@ -367,5 +386,18 @@ class CustomerController extends Controller
             'status' => ['required', Rule::in(['active', 'suspended'])],
             'expires_at' => ['nullable', 'date'],
         ]);
+
+        if ($request->user()->isBranchOperator()) {
+            $data['branch_id'] = $request->user()->branch_id;
+        }
+
+        return $data;
+    }
+
+    private function ensureCustomerAccess(Request $request, Customer $customer): void
+    {
+        if ($request->user()?->isBranchOperator()) {
+            abort_unless($customer->branch_id === $request->user()->branch_id, 403);
+        }
     }
 }

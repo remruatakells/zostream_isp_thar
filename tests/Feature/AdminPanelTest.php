@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\Package;
+use App\Models\Payment;
 use App\Models\Router;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -13,6 +14,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Hash;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Tests\TestCase;
@@ -107,6 +109,94 @@ class AdminPanelTest extends TestCase
             'nasname' => '192.168.88.1', 'secret' => 'unique-radius-secret-001',
         ]);
         $this->assertDatabaseHas('packages', ['mikrotik_profile' => 'home-20m']);
+    }
+
+    public function test_admin_can_create_a_branch_operator_panel_user(): void
+    {
+        $admin = User::factory()->create();
+        $branch = Branch::create(['name' => 'Ngopa', 'is_active' => true]);
+
+        $this->actingAs($admin)->get(route('users.create'))
+            ->assertOk()->assertSee('Branch operator')->assertSee('Ngopa');
+
+        $this->actingAs($admin)->post(route('users.store'), [
+            'name' => 'Ngopa Operator',
+            'email' => 'ngopa.operator@example.com',
+            'password' => 'operator-secret',
+            'password_confirmation' => 'operator-secret',
+            'role' => 'branch_operator',
+            'branch_id' => $branch->id,
+            'is_active' => '1',
+        ])->assertRedirect(route('users.index'))->assertSessionHas('success');
+
+        $operator = User::where('email', 'ngopa.operator@example.com')->firstOrFail();
+        $this->assertTrue($operator->isBranchOperator());
+        $this->assertSame($branch->id, $operator->branch_id);
+        $this->assertTrue(Hash::check('operator-secret', $operator->password));
+        $this->actingAs($admin)->get(route('users.index'))
+            ->assertOk()->assertSee('Ngopa Operator')->assertSee('Branch operator');
+    }
+
+    public function test_branch_operator_only_sees_and_manages_the_assigned_branch(): void
+    {
+        $ownBranch = Branch::create(['name' => 'Ngopa', 'is_active' => true]);
+        $otherBranch = Branch::create(['name' => 'Saitual', 'is_active' => true]);
+        $operator = User::factory()->create([
+            'role' => 'branch_operator', 'branch_id' => $ownBranch->id,
+        ]);
+        $router = Router::create([
+            'name' => 'Operator Router', 'host' => '10.77.0.18', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Operator Package', 'mikrotik_profile' => 'operator-package',
+            'rate_limit' => '30M/30M', 'price' => 550,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $ownCustomer = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id, 'branch_id' => $ownBranch->id,
+            'name' => 'Own Branch Customer', 'username' => 'own-branch-user',
+            'password' => 'password', 'status' => 'active',
+        ]);
+        $otherCustomer = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id, 'branch_id' => $otherBranch->id,
+            'name' => 'Other Branch Customer', 'username' => 'other-branch-user',
+            'password' => 'password', 'status' => 'active',
+        ]);
+        Payment::create([
+            'customer_id' => $ownCustomer->id, 'amount' => 550, 'method' => 'cash',
+            'reference' => 'OWN-PAYMENT', 'paid_at' => now(),
+        ]);
+        Payment::create([
+            'customer_id' => $otherCustomer->id, 'amount' => 550, 'method' => 'cash',
+            'reference' => 'OTHER-PAYMENT', 'paid_at' => now(),
+        ]);
+
+        $this->actingAs($operator)->get(route('customers.index'))
+            ->assertOk()->assertSee('Own Branch Customer')->assertDontSee('Other Branch Customer');
+        $this->actingAs($operator)->get(route('customers.edit', $otherCustomer))->assertForbidden();
+        $this->actingAs($operator)->post(route('customers.store'), [
+            'router_id' => $router->id, 'package_id' => $package->id,
+            'branch_id' => $otherBranch->id, 'name' => 'Escaped Customer',
+            'username' => 'escaped-customer', 'password' => 'password',
+            'status' => 'active',
+        ])->assertSessionHasErrors('branch_id');
+        $this->assertDatabaseMissing('customers', ['username' => 'escaped-customer']);
+        $this->actingAs($operator)->get(route('payments.index'))
+            ->assertOk()->assertSee('Own Branch Customer')->assertDontSee('Other Branch Customer');
+        $this->actingAs($operator)->get(route('routers.index'))->assertForbidden();
+        $this->actingAs($operator)->get(route('users.index'))->assertForbidden();
+        $this->actingAs($operator)->get(route('customers.import.create'))->assertForbidden();
+    }
+
+    public function test_disabled_panel_user_cannot_sign_in_or_keep_using_an_existing_session(): void
+    {
+        $user = User::factory()->create(['password' => 'secret-password', 'is_active' => false]);
+
+        $this->post('/login', ['email' => $user->email, 'password' => 'secret-password'])
+            ->assertSessionHasErrors('email');
+        $this->actingAs($user)->get('/dashboard')->assertRedirect(route('login'));
     }
 
     public function test_admin_can_manage_branches_and_cannot_delete_an_assigned_branch(): void

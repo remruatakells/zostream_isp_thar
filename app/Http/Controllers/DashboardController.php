@@ -15,8 +15,13 @@ class DashboardController extends Controller
 {
     public function __invoke(Request $request, MikroTikService $mikrotik): View
     {
-        $customers = Customer::with(['package', 'router'])->get();
-        $routers = Router::where('is_active', true)->withCount('customers')->orderBy('name')->get();
+        $branchId = $request->user()->isBranchOperator() ? $request->user()->branch_id : null;
+        $customers = Customer::with(['package', 'router'])
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))->get();
+        $routers = Router::where('is_active', true)
+            ->when($branchId, fn ($query) => $query->whereHas('customers', fn ($query) => $query->where('branch_id', $branchId)))
+            ->withCount(['customers' => fn ($query) => $query->when($branchId, fn ($query) => $query->where('branch_id', $branchId))])
+            ->orderBy('name')->get();
         $expired = $customers->filter(fn (Customer $customer) =>
             $customer->expires_at?->lt(today()) ?? false
         );
@@ -98,7 +103,9 @@ class DashboardController extends Controller
                 ->filter(fn (Customer $customer) => $customer->expires_at?->between(today(), today()->addDays(7)) ?? false)
                 ->sortBy('expires_at')->take(8)->values(),
             'routerHealth' => $routerHealth,
-            'payments' => Payment::with('customer')->latest('paid_at')->limit(6)->get(),
+            'payments' => Payment::with('customer')
+                ->when($branchId, fn ($query) => $query->whereHas('customer', fn ($query) => $query->where('branch_id', $branchId)))
+                ->latest('paid_at')->limit(6)->get(),
         ]);
     }
 }

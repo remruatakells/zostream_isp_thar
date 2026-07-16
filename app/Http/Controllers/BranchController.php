@@ -36,6 +36,9 @@ class BranchController extends Controller
         if ($branch->customers()->exists()) {
             return back()->with('error', 'This branch is assigned to customers. Move those customers before deleting it.');
         }
+        if ($branch->users()->exists()) {
+            return back()->with('error', 'This branch is assigned to panel users. Move or delete those users first.');
+        }
 
         $branch->delete();
 

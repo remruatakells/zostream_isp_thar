@@ -1,6 +1,8 @@
 <?php
 
 use App\Http\Middleware\VerifyApiToken;
+use App\Http\Middleware\EnsureAdmin;
+use App\Http\Middleware\EnsureActiveUser;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -16,6 +18,8 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->alias([
             'api.token' => VerifyApiToken::class,
+            'admin' => EnsureAdmin::class,
+            'active.user' => EnsureActiveUser::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

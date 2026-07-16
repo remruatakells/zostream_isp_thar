@@ -14,9 +14,14 @@ class PaymentController extends Controller
 {
     public function index(Request $request): View
     {
+        $branchId = $request->user()->isBranchOperator() ? $request->user()->branch_id : null;
+
         return view('payments.index', [
-            'payments' => Payment::with('customer')->latest('paid_at')->paginate(20),
-            'customers' => Customer::orderBy('name')->get(['id', 'name', 'username']),
+            'payments' => Payment::with('customer')
+                ->when($branchId, fn ($query) => $query->whereHas('customer', fn ($query) => $query->where('branch_id', $branchId)))
+                ->latest('paid_at')->paginate(20),
+            'customers' => Customer::when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+                ->orderBy('name')->get(['id', 'name', 'username']),
             'selectedCustomer' => $request->integer('customer'),
         ]);
     }
@@ -33,6 +38,8 @@ class PaymentController extends Controller
             'renew' => ['nullable', 'boolean'],
         ]);
         unset($data['renew']);
+        $customer = Customer::findOrFail($data['customer_id']);
+        $this->ensureCustomerAccess($request, $customer);
         $payment = Payment::create($data);
         $syncError = null;
 
@@ -61,8 +68,17 @@ class PaymentController extends Controller
 
     public function destroy(Payment $payment): RedirectResponse
     {
+        $this->ensureCustomerAccess(request(), $payment->customer);
         $payment->delete();
 
         return back()->with('success', 'Payment deleted.');
+    }
+
+    private function ensureCustomerAccess(Request $request, ?Customer $customer): void
+    {
+        abort_if(! $customer, 404);
+        if ($request->user()?->isBranchOperator()) {
+            abort_unless($customer->branch_id === $request->user()->branch_id, 403);
+        }
     }
 }

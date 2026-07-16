@@ -18,13 +18,18 @@
         <nav>
             <a class="{{ request()->routeIs('dashboard') ? 'active' : '' }}" href="{{ route('dashboard') }}" title="Overview"><span class="nav-icon">⌂</span><span class="nav-label">Overview</span></a>
             <a class="{{ request()->routeIs('customers.*') ? 'active' : '' }}" href="{{ route('customers.index') }}" title="Customers"><span class="nav-icon">♙</span><span class="nav-label">Customers</span></a>
+            @if(auth()->user()->isAdmin())
             <a class="{{ request()->routeIs('branches.*') ? 'active' : '' }}" href="{{ route('branches.index') }}" title="Branches"><span class="nav-icon">⌖</span><span class="nav-label">Branches</span></a>
             <a class="{{ request()->routeIs('packages.*') ? 'active' : '' }}" href="{{ route('packages.index') }}" title="Packages"><span class="nav-icon">◇</span><span class="nav-label">Packages</span></a>
+            @endif
             <a class="{{ request()->routeIs('payments.*') ? 'active' : '' }}" href="{{ route('payments.index') }}" title="Payments"><span class="nav-icon">₹</span><span class="nav-label">Payments</span></a>
+            @if(auth()->user()->isAdmin())
             <a class="{{ request()->routeIs('routers.*') ? 'active' : '' }}" href="{{ route('routers.index') }}" title="Routers"><span class="nav-icon">⌁</span><span class="nav-label">Routers</span></a>
+            <a class="{{ request()->routeIs('users.*') ? 'active' : '' }}" href="{{ route('users.index') }}" title="Admin users"><span class="nav-icon">♚</span><span class="nav-label">Admin users</span></a>
+            @endif
         </nav>
         <div class="sidebar-foot">
-            <div class="user-chip"><span>{{ strtoupper(substr(auth()->user()->name, 0, 1)) }}</span><div class="user-details"><strong>{{ auth()->user()->name }}</strong><small>{{ auth()->user()->email }}</small></div></div>
+            <div class="user-chip"><span>{{ strtoupper(substr(auth()->user()->name, 0, 1)) }}</span><div class="user-details"><strong>{{ auth()->user()->name }}</strong><small>{{ auth()->user()->isAdmin() ? 'Administrator' : (auth()->user()->branch?->name.' operator') }}</small></div></div>
             <form method="POST" action="{{ route('logout') }}">@csrf<button class="logout-button" type="submit" title="Sign out"><span class="logout-icon" aria-hidden="true">⏻</span><span class="logout-label">Sign out</span></button></form>
         </div>
     </aside>
