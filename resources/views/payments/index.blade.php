@@ -12,8 +12,7 @@
         <div class="payment-section-head"><span>01</span><div><h3>Customer & payment</h3><p>Choose the subscriber and how the payment was received.</p></div></div>
         <div class="payment-fields">
             <label class="payment-field full"><span>Customer</span><select id="paymentCustomer" name="customer_id" required><option value="">Search or choose a customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-price="{{ $customer->package?->price }}" data-package="{{ $customer->package?->name }}" data-branch="{{ $customer->branch?->name }}" data-operator-percentage="{{ $customer->branch?->operator_percentage ?? config('services.zostream_subscription.operator_percentage', 20) }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
-            <label class="payment-field"><span>Payment method</span><select id="paymentMethod" name="method"><option value="razorpay">Razorpay online</option><option value="cash">Cash</option><option value="upi">Manual UPI</option><option value="bank">Bank transfer</option><option value="card">Manual card</option></select></label>
-            <label class="payment-field"><span>Reference</span><input name="reference" value="{{ old('reference') }}" placeholder="Optional transaction ID"></label>
+            <input id="paymentMethod" type="hidden" name="method" value="razorpay">
             <label class="payment-field full"><span>Notes</span><textarea name="notes" placeholder="Add an optional note for this collection">{{ old('notes') }}</textarea></label>
         </div>
         <label class="renew-card"><input type="checkbox" name="renew" value="1" checked><i>↻</i><span><strong>Renew and activate internet</strong><small>Extend package validity, activate the customer and sync with RADIUS after successful payment.</small></span></label>
@@ -72,7 +71,6 @@
             <div><dt>ZoStream WiFi <span id="confirmWifiPercentage"></span>%</dt><dd id="confirmWifiShare"></dd></div>
             <div><dt>OTT added back</dt><dd id="confirmOttAdded"></dd></div>
             <div class="total"><dt>Razorpay amount</dt><dd id="confirmPayable"></dd></div>
-            <div><dt>Method</dt><dd id="confirmMethod"></dd></div>
         </dl>
         <p class="confirmation-note">OTT ₹{{ number_format(config('services.zostream_subscription.ott_deduction', 50), 0) }} is excluded while calculating the percentages, then added back to the ZoStream WiFi share for Razorpay.</p>
         <div class="confirmation-actions">
@@ -138,7 +136,6 @@
         button.querySelector('span').textContent = method.value === 'razorpay' ? 'Pay with Razorpay' : 'Record payment';
     };
     customer.addEventListener('change', refresh);
-    method.addEventListener('change', refresh);
     refresh();
 
     const startRazorpay = async () => {
@@ -236,7 +233,6 @@
         document.getElementById('confirmWifiShare').textContent = `₹${Number(wifiShareInput.value).toLocaleString('en-IN')}`;
         document.getElementById('confirmOttAdded').textContent = `+ ₹${ottDeduction.toLocaleString('en-IN')}`;
         document.getElementById('confirmPayable').textContent = `₹${Number(amount.value).toLocaleString('en-IN')}`;
-        document.getElementById('confirmMethod').textContent = method.selectedOptions[0].textContent;
         dialog.showModal();
     });
 
