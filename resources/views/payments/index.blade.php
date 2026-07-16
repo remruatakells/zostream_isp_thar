@@ -2,25 +2,63 @@
 @section('title', 'Payments')
 @section('eyebrow', 'Collections')
 @section('content')
-<div class="page-actions"><div><h2>Collection ledger</h2><p>Record a payment and optionally renew the customer immediately.</p></div></div>
-<section class="split-grid">
-<form id="paymentForm" class="form-card form-grid" method="POST" action="{{ route('payments.store') }}" data-checkout-url="{{ route('payments.checkout') }}" data-complete-url="{{ route('payments.razorpay.complete') }}" data-ott-deduction="{{ config('services.zostream_subscription.ott_deduction', 50) }}" data-operator-percentage="{{ config('services.zostream_subscription.operator_percentage', 20) }}">@csrf
-    <label class="full">Customer<select id="paymentCustomer" name="customer_id" required><option value="">Choose customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-price="{{ $customer->package?->price }}" data-package="{{ $customer->package?->name }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
-    <label>Package amount (₹)<input id="packageAmount" type="number" step="0.01" value="" readonly required><small class="form-help">Customer's current package price.</small></label>
-    <label>OTT deduction (₹)<input id="ottDeduction" type="number" step="0.01" value="{{ config('services.zostream_subscription.ott_deduction', 50) }}" readonly></label>
-    <label>Distribution balance (₹)<input id="distributableAmount" type="number" step="0.01" value="" readonly></label>
-    <label>Local operator {{ number_format(config('services.zostream_subscription.operator_percentage', 20), 0) }}% (₹)<input id="operatorCommission" type="number" step="0.01" value="" readonly></label>
-    <label>ZoStream WiFi {{ number_format(100 - config('services.zostream_subscription.operator_percentage', 20), 0) }}% (₹)<input id="wifiShare" type="number" step="0.01" value="" readonly></label>
-    <label>Razorpay amount (₹)<input id="paymentAmount" type="number" step="0.01" value="" readonly required><small class="form-help">ZoStream WiFi share plus the OTT ₹{{ number_format(config('services.zostream_subscription.ott_deduction', 50), 0) }}.</small></label>
-    <label>Payment method<select id="paymentMethod" name="method"><option value="razorpay">Razorpay online</option><option value="cash">Cash</option><option value="upi">Manual UPI</option><option value="bank">Bank transfer</option><option value="card">Manual card</option></select></label>
-    <label>Reference<input name="reference" value="{{ old('reference') }}" placeholder="Transaction ID"></label>
-    <label class="full">Notes<textarea name="notes" placeholder="Optional note">{{ old('notes') }}</textarea></label>
-    <label class="check full"><input type="checkbox" name="renew" value="1" checked> Renew using the customer's package validity and activate PPPoE</label>
-    <div class="form-actions"><button id="paymentButton" class="button primary">Pay with Razorpay</button></div>
+<section class="payment-hero">
+    <div><span>SMART COLLECTION</span><h2>Collect, split and activate.</h2><p>Select a customer and the panel will calculate every share before payment.</p></div>
+    <div class="payment-hero-badge"><i>✓</i><span><strong>Secure checkout</strong><small>Server-verified Razorpay payment</small></span></div>
+</section>
+
+<form id="paymentForm" class="payment-workspace" method="POST" action="{{ route('payments.store') }}" data-checkout-url="{{ route('payments.checkout') }}" data-complete-url="{{ route('payments.razorpay.complete') }}" data-ott-deduction="{{ config('services.zostream_subscription.ott_deduction', 50) }}" data-operator-percentage="{{ config('services.zostream_subscription.operator_percentage', 20) }}">@csrf
+    <section class="payment-entry-card">
+        <div class="payment-section-head"><span>01</span><div><h3>Customer & payment</h3><p>Choose the subscriber and how the payment was received.</p></div></div>
+        <div class="payment-fields">
+            <label class="payment-field full"><span>Customer</span><select id="paymentCustomer" name="customer_id" required><option value="">Search or choose a customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-price="{{ $customer->package?->price }}" data-package="{{ $customer->package?->name }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
+            <label class="payment-field"><span>Payment method</span><select id="paymentMethod" name="method"><option value="razorpay">Razorpay online</option><option value="cash">Cash</option><option value="upi">Manual UPI</option><option value="bank">Bank transfer</option><option value="card">Manual card</option></select></label>
+            <label class="payment-field"><span>Reference</span><input name="reference" value="{{ old('reference') }}" placeholder="Optional transaction ID"></label>
+            <label class="payment-field full"><span>Notes</span><textarea name="notes" placeholder="Add an optional note for this collection">{{ old('notes') }}</textarea></label>
+        </div>
+        <label class="renew-card"><input type="checkbox" name="renew" value="1" checked><i>↻</i><span><strong>Renew and activate internet</strong><small>Extend package validity, activate the customer and sync with RADIUS after successful payment.</small></span></label>
+    </section>
+
+    <aside class="payment-calculation-card">
+        <div class="payment-section-head compact"><span>02</span><div><h3>Payment breakdown</h3><p>Calculated automatically.</p></div></div>
+        <input id="packageAmount" type="hidden">
+        <input id="ottDeduction" type="hidden">
+        <input id="distributableAmount" type="hidden">
+        <input id="operatorCommission" type="hidden">
+        <input id="wifiShare" type="hidden">
+        <input id="paymentAmount" type="hidden">
+        <div id="paymentEmptyState" class="payment-empty-state"><i>₹</i><strong>Select a customer</strong><small>The package and payment split will appear here.</small></div>
+        <div id="paymentBreakdown" class="payment-breakdown" hidden>
+            <div class="selected-package"><span><small id="summaryPackageName">PACKAGE</small><strong id="summaryCustomerName">Customer</strong></span><b id="summaryPackageAmount">₹0</b></div>
+            <div class="split-line"><span>OTT reserved</span><strong id="summaryOtt">− ₹0</strong></div>
+            <div class="split-line muted"><span>Percentage base</span><strong id="summaryDistributable">₹0</strong></div>
+            <div class="share-grid">
+                <div><i>OPERATOR</i><strong id="summaryOperator">₹0</strong><small>{{ number_format(config('services.zostream_subscription.operator_percentage', 20), 0) }}% share</small></div>
+                <div><i>ZOSTREAM WIFI</i><strong id="summaryWifi">₹0</strong><small>{{ number_format(100 - config('services.zostream_subscription.operator_percentage', 20), 0) }}% share</small></div>
+            </div>
+            <div class="razorpay-total"><span><small>AMOUNT TO COLLECT</small><strong id="summaryPayable">₹0</strong></span><em>WiFi share + OTT ₹{{ number_format(config('services.zostream_subscription.ott_deduction', 50), 0) }}</em></div>
+        </div>
+        <button id="paymentButton" class="payment-submit" type="submit"><span>Pay with Razorpay</span><i>→</i></button>
+        <small class="payment-security">🔒 Amount is recalculated and verified by the server.</small>
+    </aside>
 </form>
-<article class="panel"><div class="panel-head"><div><span>HISTORY</span><h3>Latest transactions</h3></div></div><div class="activity-list">
-@forelse($payments as $payment)<div><span class="activity-icon">₹</span><p><strong>{{ $payment->customer?->name ?? 'Deleted customer' }}</strong><small>{{ ucfirst($payment->method) }} · {{ $payment->paid_at->format('d M Y') }} · Operator: {{ $payment->operator?->name ?? 'Unknown' }}</small><small>Package ₹{{ number_format($payment->package_amount ?? $payment->amount, 0) }} − OTT ₹{{ number_format($payment->ott_deduction ?? 0, 0) }} · Operator {{ number_format($payment->operator_percentage ?? 0, 0) }}% = ₹{{ number_format($payment->operator_commission ?? 0, 0) }}</small></p><b>₹{{ number_format($payment->amount, 0) }}</b><form data-confirm="Delete this payment record?" method="POST" action="{{ route('payments.destroy', $payment) }}">@csrf @method('DELETE')<button class="icon-button">×</button></form></div>@empty<div class="empty">No payment recorded.</div>@endforelse
-</div><div class="pagination">{{ $payments->links() }}</div></article>
+
+<section class="payment-history panel">
+    <div class="panel-head"><div><span>COLLECTION HISTORY</span><h3>Latest transactions</h3></div><small>{{ $payments->total() }} records</small></div>
+    <div class="payment-history-list">
+    @forelse($payments as $payment)
+        <article class="payment-history-item">
+            <span class="payment-method-icon">{{ $payment->method === 'razorpay' ? 'R' : '₹' }}</span>
+            <div class="payment-history-copy"><strong>{{ $payment->customer?->name ?? 'Deleted customer' }}</strong><small>{{ ucfirst($payment->method) }} · {{ $payment->paid_at->format('d M Y, h:i A') }} · {{ $payment->operator?->name ?? 'Unknown operator' }}</small></div>
+            <div class="payment-history-split"><span>Package ₹{{ number_format($payment->package_amount ?? $payment->amount, 0) }}</span><span>Operator ₹{{ number_format($payment->operator_commission ?? 0, 0) }}</span></div>
+            <strong class="payment-history-amount">₹{{ number_format($payment->amount, 2) }}</strong>
+            <form data-confirm="Delete this payment record?" method="POST" action="{{ route('payments.destroy', $payment) }}">@csrf @method('DELETE')<button class="payment-delete" aria-label="Delete payment">×</button></form>
+        </article>
+    @empty
+        <div class="payment-history-empty"><i>₹</i><strong>No payments yet</strong><small>Completed transactions will appear here.</small></div>
+    @endforelse
+    </div>
+    <div class="pagination">{{ $payments->links() }}</div>
 </section>
 <dialog id="paymentConfirmation" class="confirmation-dialog">
     <form method="dialog">
@@ -58,6 +96,8 @@
     const amount = document.getElementById('paymentAmount');
     const method = document.getElementById('paymentMethod');
     const button = document.getElementById('paymentButton');
+    const emptyState = document.getElementById('paymentEmptyState');
+    const breakdown = document.getElementById('paymentBreakdown');
     const dialog = document.getElementById('paymentConfirmation');
     const confirmButton = document.getElementById('confirmPaymentButton');
     const csrf = form.querySelector('input[name="_token"]').value;
@@ -65,6 +105,7 @@
     const operatorPercentage = Number(form.dataset.operatorPercentage || 20);
     const wifiPercentage = 100 - operatorPercentage;
     let busy = false;
+    const money = value => `₹${Number(value).toLocaleString('en-IN', {minimumFractionDigits: 0, maximumFractionDigits: 2})}`;
 
     const refresh = () => {
         const option = customer.selectedOptions[0];
@@ -79,7 +120,19 @@
         commissionInput.value = price > ottDeduction ? commission.toFixed(2) : '';
         wifiShareInput.value = price > ottDeduction ? wifiShare.toFixed(2) : '';
         amount.value = price > ottDeduction ? razorpayAmount.toFixed(2) : '';
-        button.textContent = method.value === 'razorpay' ? 'Pay with Razorpay' : 'Record payment';
+        emptyState.hidden = price > 0;
+        breakdown.hidden = price <= 0;
+        if (price > 0) {
+            document.getElementById('summaryPackageName').textContent = option.dataset.package || 'PACKAGE';
+            document.getElementById('summaryCustomerName').textContent = option.textContent.trim();
+            document.getElementById('summaryPackageAmount').textContent = money(price);
+            document.getElementById('summaryOtt').textContent = `− ${money(ottDeduction)}`;
+            document.getElementById('summaryDistributable').textContent = money(distributable);
+            document.getElementById('summaryOperator').textContent = money(commission);
+            document.getElementById('summaryWifi').textContent = money(wifiShare);
+            document.getElementById('summaryPayable').textContent = money(razorpayAmount);
+        }
+        button.querySelector('span').textContent = method.value === 'razorpay' ? 'Pay with Razorpay' : 'Record payment';
     };
     customer.addEventListener('change', refresh);
     method.addEventListener('change', refresh);
@@ -93,7 +146,7 @@
 
         busy = true;
         button.disabled = true;
-        button.textContent = 'Creating secure order…';
+        button.querySelector('span').textContent = 'Creating secure order…';
         try {
             const response = await fetch(form.dataset.checkoutUrl, {
                 method: 'POST',
@@ -113,7 +166,7 @@
                 prefill: checkout.prefill,
                 theme: {color: '#0c7253'},
                 handler: async payment => {
-                    button.textContent = 'Verifying payment…';
+                    button.querySelector('span').textContent = 'Verifying payment…';
                     const verified = await fetch(form.dataset.completeUrl, {
                         method: 'POST',
                         headers: {
@@ -163,7 +216,7 @@
         event.preventDefault();
         if (busy || !form.reportValidity()) return;
         if (!amount.value || Number(amount.value) <= 0) {
-            alert('Package amount must be greater than the operator wage.');
+            alert('Package amount must be greater than the OTT deduction.');
             return;
         }
         const option = customer.selectedOptions[0];
