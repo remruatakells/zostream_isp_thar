@@ -778,7 +778,16 @@ class AdminPanelTest extends TestCase
         $customer->refresh();
         $this->assertSame('active', $customer->status);
         $this->assertSame(today()->addDays(30)->toDateString(), $customer->expires_at->toDateString());
-        $this->assertDatabaseHas('payments', ['customer_id' => $customer->id, 'amount' => 500]);
+        $this->assertDatabaseHas('payments', [
+            'customer_id' => $customer->id,
+            'operator_id' => $user->id,
+            'package_amount' => 500,
+            'ott_deduction' => 50,
+            'distributable_amount' => 450,
+            'operator_percentage' => 20,
+            'operator_commission' => 90,
+            'amount' => 410,
+        ]);
         $this->assertDatabaseHas('radcheck', [
             'username' => 'renew-user', 'attribute' => 'Cleartext-Password', 'value' => 'password',
         ]);
@@ -814,7 +823,7 @@ class AdminPanelTest extends TestCase
                     'razorpay_key_id' => 'rzp_test_example',
                     'razorpay_order' => [
                         'id' => 'order_test_499',
-                        'amount' => 49900,
+                        'amount' => 40920,
                         'currency' => 'INR',
                         'status' => 'created',
                     ],
@@ -836,17 +845,22 @@ class AdminPanelTest extends TestCase
             'amount' => 1,
             'renew' => true,
         ])->assertOk()
-            ->assertJsonPath('amount', 49900)
+            ->assertJsonPath('amount', 40920)
             ->assertJsonPath('order_id', 'order_test_499');
         $checkout = PaymentCheckout::findOrFail($checkoutResponse->json('checkout_id'));
-        $this->assertSame('499.00', $checkout->amount);
+        $this->assertSame('499.00', $checkout->package_amount);
+        $this->assertSame('50.00', $checkout->ott_deduction);
+        $this->assertSame('449.00', $checkout->distributable_amount);
+        $this->assertSame('20.00', $checkout->operator_percentage);
+        $this->assertSame('89.80', $checkout->operator_commission);
+        $this->assertSame('409.20', $checkout->amount);
         $this->assertDatabaseCount('payments', 0);
         Http::assertSent(fn (Request $request) =>
             str_contains($request->url(), '/api/v3.0/external/subscription-history')
             && $request->hasHeader('X-Api-Key', 'external-api-key')
             && $request->hasHeader('X-RZ-Env', 'SANDBOX')
             && $request['phone_number'] === '9876543210'
-            && (float) $request['amount'] === 499.0
+            && (float) $request['amount'] === 409.2
         );
 
         $this->actingAs($user)->postJson(route('payments.razorpay.complete'), [
@@ -868,7 +882,13 @@ class AdminPanelTest extends TestCase
 
         $this->assertDatabaseHas('payments', [
             'customer_id' => $customer->id,
-            'amount' => 499,
+            'operator_id' => $user->id,
+            'package_amount' => 499,
+            'ott_deduction' => 50,
+            'distributable_amount' => 449,
+            'operator_percentage' => 20,
+            'operator_commission' => 89.8,
+            'amount' => 409.2,
             'method' => 'razorpay',
             'reference' => $paymentId,
         ]);

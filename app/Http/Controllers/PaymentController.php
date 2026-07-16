@@ -23,7 +23,7 @@ class PaymentController extends Controller
         $branchId = $request->user()->isBranchOperator() ? $request->user()->branch_id : null;
 
         return view('payments.index', [
-            'payments' => Payment::with('customer')
+            'payments' => Payment::with(['customer', 'operator'])
                 ->when($branchId, fn ($query) => $query->whereHas('customer', fn ($query) => $query->where('branch_id', $branchId)))
                 ->latest('paid_at')->paginate(20),
             'customers' => Customer::when($branchId, fn ($query) => $query->where('branch_id', $branchId))
@@ -47,9 +47,20 @@ class PaymentController extends Controller
         if (! $customer->package || (float) $customer->package->price <= 0) {
             return back()->withInput()->with('error', 'The selected customer does not have a payable package.');
         }
+        try {
+            $amounts = $this->paymentAmounts($customer);
+        } catch (RuntimeException $e) {
+            return back()->withInput()->with('error', $e->getMessage());
+        }
         $payment = Payment::create([
             'customer_id' => $customer->id,
-            'amount' => $customer->package->price,
+            'operator_id' => $request->user()->id,
+            'package_amount' => $amounts['package'],
+            'ott_deduction' => $amounts['ott'],
+            'distributable_amount' => $amounts['distributable'],
+            'operator_percentage' => $amounts['operator_percentage'],
+            'operator_commission' => $amounts['commission'],
+            'amount' => $amounts['payable'],
             'method' => $data['method'],
             'reference' => $data['reference'] ?? null,
             'paid_at' => now(),
@@ -79,6 +90,7 @@ class PaymentController extends Controller
         $this->ensureCustomerAccess($request, $customer);
 
         try {
+            $amounts = $this->paymentAmounts($customer);
             $external = $subscriptions->createOrder($customer);
             $order = $external['razorpay_order'];
             $checkout = PaymentCheckout::create([
@@ -86,7 +98,12 @@ class PaymentController extends Controller
                 'customer_id' => $customer->id,
                 'external_order_id' => $order['id'],
                 'razorpay_key_id' => $external['razorpay_key_id'],
-                'amount' => $customer->package->price,
+                'package_amount' => $amounts['package'],
+                'ott_deduction' => $amounts['ott'],
+                'distributable_amount' => $amounts['distributable'],
+                'operator_percentage' => $amounts['operator_percentage'],
+                'operator_commission' => $amounts['commission'],
+                'amount' => $amounts['payable'],
                 'currency' => 'INR',
                 'renew' => $request->boolean('renew'),
                 'notes' => $data['notes'] ?? null,
@@ -155,6 +172,12 @@ class PaymentController extends Controller
 
                 $payment = Payment::create([
                     'customer_id' => $locked->customer_id,
+                    'operator_id' => $locked->user_id,
+                    'package_amount' => $locked->package_amount,
+                    'ott_deduction' => $locked->ott_deduction,
+                    'distributable_amount' => $locked->distributable_amount,
+                    'operator_percentage' => $locked->operator_percentage,
+                    'operator_commission' => $locked->operator_commission,
                     'amount' => $locked->amount,
                     'method' => 'razorpay',
                     'reference' => $data['razorpay_payment_id'],
@@ -227,5 +250,30 @@ class PaymentController extends Controller
         }
 
         return null;
+    }
+
+    private function paymentAmounts(Customer $customer): array
+    {
+        $packageAmount = round((float) ($customer->package?->price ?? 0), 2);
+        $ottDeduction = round(max(0, (float) config('services.zostream_subscription.ott_deduction', 50)), 2);
+        $operatorPercentage = round(min(100, max(0, (float) config('services.zostream_subscription.operator_percentage', 20))), 2);
+        $distributableAmount = round($packageAmount - $ottDeduction, 2);
+        $commission = round($distributableAmount * ($operatorPercentage / 100), 2);
+        $wifiShare = round($distributableAmount - $commission, 2);
+        $payableAmount = round($wifiShare + $ottDeduction, 2);
+
+        if ($packageAmount <= 0 || $payableAmount <= 0) {
+            throw new RuntimeException('The package amount must be greater than the OTT deduction.');
+        }
+
+        return [
+            'package' => $packageAmount,
+            'ott' => $ottDeduction,
+            'distributable' => $distributableAmount,
+            'operator_percentage' => $operatorPercentage,
+            'commission' => $commission,
+            'wifi_share' => $wifiShare,
+            'payable' => $payableAmount,
+        ];
     }
 }

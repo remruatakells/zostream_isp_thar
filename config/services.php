@@ -45,6 +45,8 @@ return [
         'environment' => env('ZOSTREAM_RAZORPAY_ENV', 'SANDBOX'),
         'razorpay_secret' => env('ZOSTREAM_RAZORPAY_KEY_SECRET'),
         'source_name' => env('ZOSTREAM_PAYMENT_SOURCE', 'zostream-isp-panel'),
+        'ott_deduction' => (float) env('ZOSTREAM_OTT_DEDUCTION', 50),
+        'operator_percentage' => (float) env('ZOSTREAM_OPERATOR_PERCENTAGE', 20),
     ],
 
 ];

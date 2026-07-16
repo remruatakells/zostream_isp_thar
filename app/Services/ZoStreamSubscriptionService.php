@@ -19,6 +19,16 @@ class ZoStreamSubscriptionService
         if (! $customer->package || (float) $customer->package->price <= 0) {
             throw new RuntimeException('The customer does not have a payable package.');
         }
+        $packageAmount = (float) $customer->package->price;
+        $ottDeduction = max(0, (float) config('services.zostream_subscription.ott_deduction', 50));
+        $operatorPercentage = min(100, max(0, (float) config('services.zostream_subscription.operator_percentage', 20)));
+        $distributableAmount = $packageAmount - $ottDeduction;
+        $operatorCommission = $distributableAmount * ($operatorPercentage / 100);
+        $wifiShare = $distributableAmount - $operatorCommission;
+        $payableAmount = $wifiShare + $ottDeduction;
+        if ($payableAmount <= 0) {
+            throw new RuntimeException('The package amount must be greater than the OTT deduction.');
+        }
         if (blank($customer->phone)) {
             throw new RuntimeException('The customer phone number is required for ZoStream payment.');
         }
@@ -34,7 +44,7 @@ class ZoStreamSubscriptionService
                 ])
                 ->post(rtrim((string) config('services.zostream_subscription.base_url'), '/').'/api/v3.0/external/subscription-history', [
                     'phone_number' => $customer->phone,
-                    'amount' => (float) $customer->package->price,
+                    'amount' => $payableAmount,
                     'currency' => 'INR',
                     'meta' => [
                         'source_name' => (string) config('services.zostream_subscription.source_name', 'zostream-isp-panel'),
@@ -51,7 +61,7 @@ class ZoStreamSubscriptionService
         if (data_get($data, 'status') !== 'success' || ! is_array($order) || blank($order['id'] ?? null)) {
             throw new RuntimeException((string) (data_get($data, 'message') ?: 'ZoStream API did not return a Razorpay order.'));
         }
-        $expectedAmount = (int) round((float) $customer->package->price * 100);
+        $expectedAmount = (int) round($payableAmount * 100);
         if ((int) ($order['amount'] ?? 0) !== $expectedAmount || strtoupper((string) ($order['currency'] ?? '')) !== 'INR') {
             throw new RuntimeException('ZoStream API returned an order with an unexpected amount or currency.');
         }
