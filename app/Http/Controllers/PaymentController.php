@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Customer;
 use App\Models\Payment;
 use App\Models\PaymentCheckout;
+use App\Models\Package;
 use App\Services\RadiusService;
 use App\Services\ZoStreamSubscriptionService;
 use Illuminate\Http\JsonResponse;
@@ -12,6 +13,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
 use RuntimeException;
 use Throwable;
@@ -23,12 +25,13 @@ class PaymentController extends Controller
         $branchId = $request->user()->isBranchOperator() ? $request->user()->branch_id : null;
 
         return view('payments.index', [
-            'payments' => Payment::with(['customer', 'operator'])
+            'payments' => Payment::with(['customer', 'operator', 'package'])
                 ->when($branchId, fn ($query) => $query->whereHas('customer', fn ($query) => $query->where('branch_id', $branchId)))
                 ->latest('paid_at')->paginate(20),
             'customers' => Customer::when($branchId, fn ($query) => $query->where('branch_id', $branchId))
-                ->with(['package:id,name,price,validity_days', 'branch:id,name,operator_percentage,ott_deduction'])
+                ->with(['package:id,name,price,validity_days', 'branch:id,name,operator_percentage,ott_deduction', 'branch.packages:id'])
                 ->orderBy('name')->get(['id', 'package_id', 'branch_id', 'name', 'phone', 'username']),
+            'packages' => Package::where('is_active', true)->orderBy('name')->get(),
             'selectedCustomer' => $request->integer('customer'),
         ]);
     }
@@ -37,6 +40,7 @@ class PaymentController extends Controller
     {
         $data = $request->validate([
             'customer_id' => ['required', 'exists:customers,id'],
+            'package_id' => ['nullable', 'exists:packages,id'],
             'method' => ['required', Rule::in(['cash', 'upi', 'bank', 'card'])],
             'reference' => ['nullable', 'string', 'max:100'],
             'notes' => ['nullable', 'string', 'max:1000'],
@@ -44,16 +48,18 @@ class PaymentController extends Controller
         ]);
         $customer = Customer::with(['package', 'router', 'branch'])->findOrFail($data['customer_id']);
         $this->ensureCustomerAccess($request, $customer);
-        if (! $customer->package || (float) $customer->package->price <= 0) {
+        $package = $this->selectedPackage($customer, $data['package_id'] ?? null);
+        if ((float) $package->price <= 0) {
             return back()->withInput()->with('error', 'The selected customer does not have a payable package.');
         }
         try {
-            $amounts = $this->paymentAmounts($customer);
+            $amounts = $this->paymentAmounts($customer, $package);
         } catch (RuntimeException $e) {
             return back()->withInput()->with('error', $e->getMessage());
         }
         $payment = Payment::create([
             'customer_id' => $customer->id,
+            'package_id' => $package->id,
             'operator_id' => $request->user()->id,
             'package_amount' => $amounts['package'],
             'ott_deduction' => $amounts['ott'],
@@ -66,7 +72,7 @@ class PaymentController extends Controller
             'paid_at' => now(),
             'notes' => $data['notes'] ?? null,
         ]);
-        $syncError = $request->boolean('renew') ? $this->renewCustomer($customer, $radius) : null;
+        $syncError = $request->boolean('renew') ? $this->renewCustomer($customer, $radius, $package) : null;
 
         if ($syncError) {
             return back()->with('warning', 'Payment was recorded and the customer renewed locally, but RADIUS sync failed: '.$syncError.' Use the customer Sync action to retry; do not record the payment again.');
@@ -83,19 +89,22 @@ class PaymentController extends Controller
     {
         $data = $request->validate([
             'customer_id' => ['required', 'exists:customers,id'],
+            'package_id' => ['nullable', 'exists:packages,id'],
             'notes' => ['nullable', 'string', 'max:1000'],
             'renew' => ['nullable', 'boolean'],
         ]);
         $customer = Customer::with(['package', 'router', 'branch'])->findOrFail($data['customer_id']);
         $this->ensureCustomerAccess($request, $customer);
+        $package = $this->selectedPackage($customer, $data['package_id'] ?? null);
 
         try {
-            $amounts = $this->paymentAmounts($customer);
-            $external = $subscriptions->createOrder($customer);
+            $amounts = $this->paymentAmounts($customer, $package);
+            $external = $subscriptions->createOrder($customer, $package);
             $order = $external['razorpay_order'];
             $checkout = PaymentCheckout::create([
                 'user_id' => $request->user()->id,
                 'customer_id' => $customer->id,
+                'package_id' => $package->id,
                 'external_order_id' => $order['id'],
                 'razorpay_key_id' => $external['razorpay_key_id'],
                 'package_amount' => $amounts['package'],
@@ -122,7 +131,7 @@ class PaymentController extends Controller
             'amount' => (int) round((float) $checkout->amount * 100),
             'currency' => $checkout->currency,
             'name' => config('app.name'),
-            'description' => $customer->package->name.' renewal for '.$customer->username,
+            'description' => $package->name.' renewal for '.$customer->username,
             'prefill' => [
                 'name' => $customer->name,
                 'contact' => $customer->phone,
@@ -143,7 +152,7 @@ class PaymentController extends Controller
             return response()->json(['message' => 'ZOSTREAM_RAZORPAY_KEY_SECRET is not configured.'], 422);
         }
 
-        $checkout = PaymentCheckout::with(['customer.package', 'customer.router'])
+        $checkout = PaymentCheckout::with(['customer.package', 'customer.router', 'customer.branch', 'package'])
             ->where('user_id', $request->user()->id)
             ->findOrFail($data['checkout_id']);
         $this->ensureCustomerAccess($request, $checkout->customer);
@@ -172,6 +181,7 @@ class PaymentController extends Controller
 
                 $payment = Payment::create([
                     'customer_id' => $locked->customer_id,
+                    'package_id' => $locked->package_id,
                     'operator_id' => $locked->user_id,
                     'package_amount' => $locked->package_amount,
                     'ott_deduction' => $locked->ott_deduction,
@@ -202,7 +212,7 @@ class PaymentController extends Controller
 
         $syncError = null;
         if ($created && $checkout->renew) {
-            $syncError = $this->renewCustomer($checkout->customer, $radius);
+            $syncError = $this->renewCustomer($checkout->customer, $radius, $checkout->package);
         }
         $message = $created ? 'Razorpay payment verified and recorded.' : 'Payment was already recorded.';
         if ($syncError) {
@@ -234,11 +244,17 @@ class PaymentController extends Controller
         }
     }
 
-    private function renewCustomer(Customer $customer, RadiusService $radius): ?string
+    private function renewCustomer(Customer $customer, RadiusService $radius, ?Package $package): ?string
     {
+        if (! $package) {
+            return 'The package selected during checkout no longer exists.';
+        }
+
         $base = $customer->expires_at && $customer->expires_at->isFuture() ? $customer->expires_at : today();
+        $customer->setRelation('package', $package);
         $customer->update([
-            'expires_at' => $base->copy()->addDays($customer->package?->validity_days ?? 30),
+            'package_id' => $package->id,
+            'expires_at' => $base->copy()->addDays($package->validity_days),
             'status' => 'active',
         ]);
         try {
@@ -252,9 +268,9 @@ class PaymentController extends Controller
         return null;
     }
 
-    private function paymentAmounts(Customer $customer): array
+    private function paymentAmounts(Customer $customer, Package $package): array
     {
-        $packageAmount = round((float) ($customer->package?->price ?? 0), 2);
+        $packageAmount = round((float) $package->price, 2);
         $ottDeduction = round(max(0, (float) ($customer->branch?->ott_deduction ?? 0)), 2);
         $operatorPercentage = round(min(100, max(0, (float) ($customer->branch?->operator_percentage
             ?? config('services.zostream_subscription.operator_percentage', 20)))), 2);
@@ -276,5 +292,26 @@ class PaymentController extends Controller
             'wifi_share' => $wifiShare,
             'payable' => $payableAmount,
         ];
+    }
+
+    private function selectedPackage(Customer $customer, mixed $packageId): Package
+    {
+        $packageId = $packageId ?: $customer->package_id;
+        $package = Package::where('is_active', true)->find($packageId);
+        if (! $package) {
+            throw ValidationException::withMessages([
+                'package_id' => 'Select an active package for this payment.',
+            ]);
+        }
+
+        $customer->loadMissing('branch.packages');
+        if ($customer->branch && $customer->branch->packages->isNotEmpty()
+            && ! $customer->branch->packages->contains('id', $package->id)) {
+            throw ValidationException::withMessages([
+                'package_id' => 'The selected package is not available for this customer branch.',
+            ]);
+        }
+
+        return $package;
     }
 }

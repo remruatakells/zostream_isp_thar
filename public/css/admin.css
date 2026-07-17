@@ -384,3 +384,5 @@
 .router-health-panel .badge{font-size:12px}
 @media(max-width:900px){.overview-chart-card{grid-template-columns:1fr}.overview-donut-wrap{grid-row:1}.overview-donut{width:210px}}
 @media(max-width:600px){.overview-chart-card{padding:22px 18px}.overview-chart-legend{grid-template-columns:1fr}.overview-clickable-stats .stat-card>i{opacity:1;transform:none}.overview-donut{width:185px}}
+
+.payment-field>small{color:var(--muted);font-size:11px;line-height:1.45}

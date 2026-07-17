@@ -11,7 +11,7 @@ class Payment extends Model
     use HasFactory;
 
     protected $fillable = [
-        'customer_id', 'operator_id', 'package_amount', 'ott_deduction',
+        'customer_id', 'package_id', 'operator_id', 'package_amount', 'ott_deduction',
         'distributable_amount', 'operator_percentage', 'operator_commission',
         'amount', 'method', 'reference', 'paid_at', 'notes',
     ];
@@ -37,5 +37,10 @@ class Payment extends Model
     public function operator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'operator_id');
+    }
+
+    public function package(): BelongsTo
+    {
+        return $this->belongsTo(Package::class);
     }
 }

@@ -11,7 +11,8 @@
     <section class="payment-entry-card">
         <div class="payment-section-head"><span>01</span><div><h3>Customer & payment</h3><p>Choose the subscriber and how the payment was received.</p></div></div>
         <div class="payment-fields">
-            <label class="payment-field full"><span>Customer</span><select id="paymentCustomer" name="customer_id" required><option value="">Search or choose a customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-price="{{ $customer->package?->price }}" data-package="{{ $customer->package?->name }}" data-branch="{{ $customer->branch?->name }}" data-operator-percentage="{{ $customer->branch?->operator_percentage ?? config('services.zostream_subscription.operator_percentage', 20) }}" data-ott-deduction="{{ $customer->branch?->ott_deduction ?? 0 }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
+            <label class="payment-field full"><span>Customer</span><select id="paymentCustomer" name="customer_id" required><option value="">Search or choose a customer</option>@foreach($customers as $customer)<option value="{{ $customer->id }}" data-package-id="{{ $customer->package_id }}" data-package-ids='@json($customer->branch?->packages->pluck("id")->values() ?? [])' data-branch="{{ $customer->branch?->name }}" data-operator-percentage="{{ $customer->branch?->operator_percentage ?? config('services.zostream_subscription.operator_percentage', 20) }}" data-ott-deduction="{{ $customer->branch?->ott_deduction ?? 0 }}" @selected(old('customer_id', $selectedCustomer) == $customer->id)>{{ $customer->name }} · {{ $customer->username }}</option>@endforeach</select></label>
+            <label class="payment-field full"><span>Package</span><select id="paymentPackage" name="package_id" required disabled><option value="">Select a customer first</option>@foreach($packages as $package)<option value="{{ $package->id }}" data-price="{{ $package->price }}" data-package="{{ $package->name }}" data-validity="{{ $package->validity_days }}">{{ $package->name }} · ₹{{ number_format($package->price, 0) }} · {{ $package->validity_days }} days</option>@endforeach</select><small id="paymentPackageHelp">The customer's current package will be selected automatically.</small></label>
             <input id="paymentMethod" type="hidden" name="method" value="razorpay">
             <label class="payment-field full"><span>Notes</span><textarea name="notes" placeholder="Add an optional note for this collection">{{ old('notes') }}</textarea></label>
         </div>
@@ -86,6 +87,8 @@
 (() => {
     const form = document.getElementById('paymentForm');
     const customer = document.getElementById('paymentCustomer');
+    const packageSelect = document.getElementById('paymentPackage');
+    const packageHelp = document.getElementById('paymentPackageHelp');
     const packageAmount = document.getElementById('packageAmount');
     const ottInput = document.getElementById('ottDeduction');
     const distributableInput = document.getElementById('distributableAmount');
@@ -104,9 +107,37 @@
     let busy = false;
     const money = value => `₹${Number(value).toLocaleString('en-IN', {minimumFractionDigits: 0, maximumFractionDigits: 2})}`;
 
+    const refreshPackages = () => {
+        const customerOption = customer.selectedOptions[0];
+        const hasCustomer = Boolean(customer.value);
+        const currentPackageId = customerOption?.dataset.packageId || '';
+        const allowedPackageIds = JSON.parse(customerOption?.dataset.packageIds || '[]').map(String);
+        const unrestricted = allowedPackageIds.length === 0;
+        let available = 0;
+
+        [...packageSelect.options].forEach((option, index) => {
+            if (index === 0) return;
+            const show = hasCustomer && (unrestricted || allowedPackageIds.includes(option.value));
+            option.hidden = !show;
+            option.disabled = !show;
+            if (show) available++;
+        });
+
+        packageSelect.disabled = !hasCustomer;
+        packageSelect.options[0].textContent = hasCustomer ? 'Choose package' : 'Select a customer first';
+        packageSelect.value = hasCustomer ? currentPackageId : '';
+        if (packageSelect.selectedOptions[0]?.disabled || !packageSelect.value) {
+            packageSelect.value = '';
+        }
+        packageHelp.textContent = hasCustomer
+            ? `${available} package${available === 1 ? '' : 's'} available. Current customer package is selected by default.`
+            : 'The customer\'s current package will be selected automatically.';
+    };
+
     const refresh = () => {
         const option = customer.selectedOptions[0];
-        const price = Number(option?.dataset.price || 0);
+        const packageOption = packageSelect.selectedOptions[0];
+        const price = Number(packageOption?.dataset.price || 0);
         const ottDeduction = Number(option?.dataset.ottDeduction || defaultOttDeduction);
         const operatorPercentage = Number(option?.dataset.operatorPercentage || defaultOperatorPercentage);
         const wifiPercentage = 100 - operatorPercentage;
@@ -123,7 +154,7 @@
         emptyState.hidden = price > 0;
         breakdown.hidden = price <= 0;
         if (price > 0) {
-            document.getElementById('summaryPackageName').textContent = option.dataset.package || 'PACKAGE';
+            document.getElementById('summaryPackageName').textContent = packageOption.dataset.package || 'PACKAGE';
             document.getElementById('summaryCustomerName').textContent = option.textContent.trim();
             document.getElementById('summaryPackageAmount').textContent = money(price);
             document.getElementById('summaryOtt').textContent = `− ${money(ottDeduction)}`;
@@ -136,7 +167,12 @@
         }
         button.querySelector('span').textContent = method.value === 'razorpay' ? 'Pay with Razorpay' : 'Record payment';
     };
-    customer.addEventListener('change', refresh);
+    customer.addEventListener('change', () => {
+        refreshPackages();
+        refresh();
+    });
+    packageSelect.addEventListener('change', refresh);
+    refreshPackages();
     refresh();
 
     const startRazorpay = async () => {
@@ -225,7 +261,7 @@
         const operatorPercentage = Number(option?.dataset.operatorPercentage || defaultOperatorPercentage);
         const wifiPercentage = 100 - operatorPercentage;
         document.getElementById('confirmCustomer').textContent = option.textContent.trim();
-        document.getElementById('confirmPackage').textContent = option.dataset.package || 'No package';
+        document.getElementById('confirmPackage').textContent = packageSelect.selectedOptions[0]?.dataset.package || 'No package';
         document.getElementById('confirmPackageAmount').textContent = `₹${Number(packageAmount.value).toLocaleString('en-IN')}`;
         document.getElementById('confirmOtt').textContent = `− ₹${ottDeduction.toLocaleString('en-IN')}`;
         document.getElementById('confirmDistributable').textContent = `₹${Number(distributableInput.value).toLocaleString('en-IN')}`;

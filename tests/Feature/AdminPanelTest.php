@@ -890,6 +890,71 @@ class AdminPanelTest extends TestCase
         ]);
     }
 
+    public function test_branch_operator_can_select_a_package_and_payment_renewal_updates_the_customer_plan(): void
+    {
+        $branch = Branch::create(['name' => 'Plan Branch', 'is_active' => true]);
+        $operator = User::factory()->create([
+            'role' => 'branch_operator',
+            'branch_id' => $branch->id,
+        ]);
+        $router = Router::create([
+            'name' => 'Plan Router', 'host' => '10.77.0.25', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $currentPackage = Package::create([
+            'name' => 'Current Plan', 'mikrotik_profile' => 'current-plan',
+            'rate_limit' => '30M/30M', 'price' => 500,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $upgradePackage = Package::create([
+            'name' => 'Upgrade Plan', 'mikrotik_profile' => 'upgrade-plan',
+            'rate_limit' => '100M/100M', 'price' => 900,
+            'validity_days' => 60, 'is_active' => true,
+        ]);
+        $branch->packages()->sync([$currentPackage->id, $upgradePackage->id]);
+        $customer = Customer::create([
+            'router_id' => $router->id,
+            'package_id' => $currentPackage->id,
+            'branch_id' => $branch->id,
+            'name' => 'Plan Customer',
+            'phone' => '9876543210',
+            'username' => 'plan-customer',
+            'password' => 'password',
+            'status' => 'suspended',
+            'expires_at' => today()->subDay(),
+        ]);
+
+        $this->actingAs($operator)->get(route('payments.index', ['customer' => $customer]))
+            ->assertOk()
+            ->assertSee('name="package_id"', false)
+            ->assertSee('data-package-id="'.$currentPackage->id.'"', false)
+            ->assertSee('Upgrade Plan');
+
+        $this->actingAs($operator)->post(route('payments.store'), [
+            'customer_id' => $customer->id,
+            'package_id' => $upgradePackage->id,
+            'method' => 'cash',
+            'renew' => '1',
+        ])->assertRedirect()
+            ->assertSessionHas('success', 'Payment recorded; customer renewed and synced with RADIUS.');
+
+        $customer->refresh();
+        $this->assertSame($upgradePackage->id, $customer->package_id);
+        $this->assertSame(today()->addDays(60)->toDateString(), $customer->expires_at->toDateString());
+        $this->assertDatabaseHas('payments', [
+            'customer_id' => $customer->id,
+            'package_id' => $upgradePackage->id,
+            'package_amount' => 900,
+            'amount' => 720,
+        ]);
+        $this->assertDatabaseHas('radreply', [
+            'username' => 'plan-customer',
+            'attribute' => 'Mikrotik-Rate-Limit',
+            'value' => '100M/100M',
+        ]);
+    }
+
     public function test_razorpay_checkout_uses_package_amount_and_records_only_a_verified_payment(): void
     {
         config()->set('services.zostream_subscription.api_key', 'external-api-key');

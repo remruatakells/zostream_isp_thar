@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class PaymentCheckout extends Model
 {
     protected $fillable = [
-        'user_id', 'customer_id', 'payment_id', 'external_order_id',
+        'user_id', 'customer_id', 'package_id', 'payment_id', 'external_order_id',
         'razorpay_key_id', 'package_amount', 'ott_deduction',
         'distributable_amount', 'operator_percentage', 'operator_commission',
         'amount', 'currency', 'status',
@@ -39,6 +39,11 @@ class PaymentCheckout extends Model
     public function payment(): BelongsTo
     {
         return $this->belongsTo(Payment::class);
+    }
+
+    public function package(): BelongsTo
+    {
+        return $this->belongsTo(Package::class);
     }
 
     public function user(): BelongsTo

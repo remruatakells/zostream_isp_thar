@@ -3,23 +3,25 @@
 namespace App\Services;
 
 use App\Models\Customer;
+use App\Models\Package;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Facades\Http;
 use RuntimeException;
 
 class ZoStreamSubscriptionService
 {
-    public function createOrder(Customer $customer): array
+    public function createOrder(Customer $customer, ?Package $package = null): array
     {
         $customer->loadMissing(['package', 'branch']);
+        $package ??= $customer->package;
         $apiKey = (string) config('services.zostream_subscription.api_key');
         if ($apiKey === '') {
             throw new RuntimeException('ZOSTREAM_EXTERNAL_API_KEY is not configured.');
         }
-        if (! $customer->package || (float) $customer->package->price <= 0) {
+        if (! $package || (float) $package->price <= 0) {
             throw new RuntimeException('The customer does not have a payable package.');
         }
-        $packageAmount = (float) $customer->package->price;
+        $packageAmount = (float) $package->price;
         $ottDeduction = max(0, (float) ($customer->branch?->ott_deduction ?? 0));
         $operatorPercentage = min(100, max(0, (float) ($customer->branch?->operator_percentage
             ?? config('services.zostream_subscription.operator_percentage', 20))));
