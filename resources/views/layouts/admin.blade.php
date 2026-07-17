@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content="{{ csrf_token() }}">
     <title>@yield('title', 'Dashboard') · {{ config('app.name') }}</title>
+    <link rel="icon" type="image/jpeg" href="{{ asset('images/favicon.jpeg') }}">
+    <link rel="apple-touch-icon" href="{{ asset('images/zostream-logo.jpeg') }}">
     <script>try{if(localStorage.getItem('zostream.sidebar.collapsed')==='1')document.documentElement.classList.add('nav-collapsed')}catch(e){}</script>
     <link rel="stylesheet" href="{{ asset('css/admin.css') }}?v={{ filemtime(public_path('css/admin.css')) }}">
 </head>
@@ -12,7 +14,7 @@
 <div class="app-shell">
     <aside class="sidebar" id="sidebar">
         <a class="brand" href="{{ route('dashboard') }}">
-            <span class="brand-mark">ZS</span>
+            <img class="brand-logo" src="{{ asset('images/zostream-logo.jpeg') }}" alt="ZoStream logo">
             <span class="brand-copy"><strong>ZoStream</strong><small>ISP CONTROL</small></span>
         </a>
         <nav>

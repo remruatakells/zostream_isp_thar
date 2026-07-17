@@ -386,3 +386,7 @@
 @media(max-width:600px){.overview-chart-card{padding:22px 18px}.overview-chart-legend{grid-template-columns:1fr}.overview-clickable-stats .stat-card>i{opacity:1;transform:none}.overview-donut{width:185px}}
 
 .payment-field>small{color:var(--muted);font-size:11px;line-height:1.45}
+
+/* ZoStream supplied brand artwork */
+.brand-logo{width:44px;height:44px;flex:0 0 44px;display:block;object-fit:cover;border-radius:12px;background:#fff;box-shadow:0 5px 16px rgba(3,24,18,.2),inset 0 0 0 1px rgba(255,255,255,.4)}
+.login-brand .brand-logo{width:56px;height:56px;flex-basis:56px;border-radius:15px;box-shadow:0 8px 24px rgba(17,70,52,.15)}
