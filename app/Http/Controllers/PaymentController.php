@@ -7,6 +7,7 @@ use App\Models\Payment;
 use App\Models\PaymentCheckout;
 use App\Models\Package;
 use App\Services\RadiusService;
+use App\Services\PaymentInvoicePdf;
 use App\Services\ZoStreamSubscriptionService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -15,6 +16,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Illuminate\View\View;
+use Symfony\Component\HttpFoundation\Response;
 use RuntimeException;
 use Throwable;
 
@@ -234,6 +236,20 @@ class PaymentController extends Controller
         $payment->delete();
 
         return back()->with('success', 'Payment deleted.');
+    }
+
+    public function invoice(Payment $payment, PaymentInvoicePdf $invoice): Response
+    {
+        $payment->loadMissing('customer');
+        $this->ensureCustomerAccess(request(), $payment->customer);
+
+        $filename = sprintf('zostream-invoice-%06d.pdf', $payment->id);
+
+        return response($invoice->render($payment), 200, [
+            'Content-Type' => 'application/pdf',
+            'Content-Disposition' => 'attachment; filename="'.$filename.'"',
+            'Cache-Control' => 'private, no-store, max-age=0',
+        ]);
     }
 
     private function ensureCustomerAccess(Request $request, ?Customer $customer): void

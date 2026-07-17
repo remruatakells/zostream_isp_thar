@@ -890,6 +890,53 @@ class AdminPanelTest extends TestCase
         ]);
     }
 
+    public function test_payment_invoice_is_a_downloadable_pdf_scoped_to_the_operator_branch(): void
+    {
+        $admin = User::factory()->create();
+        $branch = Branch::create(['name' => 'Invoice Branch', 'is_active' => true]);
+        $otherBranch = Branch::create(['name' => 'Other Branch', 'is_active' => true]);
+        $operator = User::factory()->create(['role' => 'branch_operator', 'branch_id' => $branch->id]);
+        $otherOperator = User::factory()->create(['role' => 'branch_operator', 'branch_id' => $otherBranch->id]);
+        $router = Router::create([
+            'name' => 'Invoice Router', 'host' => '10.77.0.30', 'port' => 80,
+            'username' => 'api', 'password' => 'secret',
+            'use_ssl' => false, 'verify_ssl' => false, 'is_active' => true,
+        ]);
+        $package = Package::create([
+            'name' => 'Invoice Plan', 'mikrotik_profile' => 'invoice-plan',
+            'rate_limit' => '30M/30M', 'price' => 550,
+            'validity_days' => 30, 'is_active' => true,
+        ]);
+        $customer = Customer::create([
+            'router_id' => $router->id, 'package_id' => $package->id, 'branch_id' => $branch->id,
+            'name' => 'Invoice Customer', 'phone' => '9876543210',
+            'username' => 'invoice-user', 'password' => 'password',
+            'status' => 'active', 'expires_at' => today()->addMonth(),
+        ]);
+        $payment = Payment::create([
+            'customer_id' => $customer->id, 'package_id' => $package->id,
+            'operator_id' => $operator->id, 'package_amount' => 550,
+            'ott_deduction' => 50, 'distributable_amount' => 500,
+            'operator_percentage' => 20, 'operator_commission' => 100,
+            'amount' => 450, 'method' => 'razorpay', 'reference' => 'pay_invoice_1',
+            'paid_at' => now(),
+        ]);
+
+        $this->actingAs($operator)->get(route('payments.index'))
+            ->assertOk()
+            ->assertSee(route('payments.invoice', $payment), false);
+
+        $response = $this->actingAs($operator)->get(route('payments.invoice', $payment));
+        $response->assertOk()
+            ->assertHeader('content-type', 'application/pdf')
+            ->assertDownload('zostream-invoice-'.str_pad((string) $payment->id, 6, '0', STR_PAD_LEFT).'.pdf');
+        $this->assertStringStartsWith('%PDF-1.4', $response->getContent());
+        $this->assertStringContainsString('Invoice Customer', $response->getContent());
+
+        $this->actingAs($otherOperator)->get(route('payments.invoice', $payment))->assertForbidden();
+        $this->actingAs($admin)->get(route('payments.invoice', $payment))->assertOk();
+    }
+
     public function test_branch_operator_can_select_a_package_and_payment_renewal_updates_the_customer_plan(): void
     {
         $branch = Branch::create(['name' => 'Plan Branch', 'is_active' => true]);

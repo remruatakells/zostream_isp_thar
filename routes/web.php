@@ -47,5 +47,6 @@ Route::middleware(['auth', 'active.user'])->group(function () {
 
     Route::post('/payments/checkout', [PaymentController::class, 'checkout'])->name('payments.checkout');
     Route::post('/payments/razorpay/complete', [PaymentController::class, 'completeRazorpay'])->name('payments.razorpay.complete');
+    Route::get('/payments/{payment}/invoice', [PaymentController::class, 'invoice'])->name('payments.invoice');
     Route::resource('payments', PaymentController::class)->only(['index', 'store', 'destroy']);
 });

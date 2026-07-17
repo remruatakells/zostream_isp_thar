@@ -52,6 +52,7 @@
             <div class="payment-history-copy"><strong>{{ $payment->customer?->name ?? 'Deleted customer' }}</strong><small>{{ ucfirst($payment->method) }} · {{ $payment->paid_at->format('d M Y, h:i A') }} · {{ $payment->operator?->name ?? 'Unknown operator' }}</small></div>
             <div class="payment-history-split"><span>Package ₹{{ number_format($payment->package_amount ?? $payment->amount, 0) }}</span><span>Operator ₹{{ number_format($payment->operator_commission ?? 0, 0) }}</span></div>
             <strong class="payment-history-amount">₹{{ number_format($payment->amount, 2) }}</strong>
+            <a class="payment-invoice" href="{{ route('payments.invoice', $payment) }}" title="Download invoice PDF" aria-label="Download invoice PDF">PDF</a>
             <form data-confirm="Delete this payment record?" method="POST" action="{{ route('payments.destroy', $payment) }}">@csrf @method('DELETE')<button class="payment-delete" aria-label="Delete payment">×</button></form>
         </article>
     @empty
